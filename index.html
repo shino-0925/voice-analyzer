@@ -1,0 +1,2386 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="歌声分析">
+<meta name="description" content="歌声を録音・読み込みして、音程・ビブラート・響きを測り、考察レポートを作るアプリ。音声は端末の外に送りません。">
+<title>歌声分析アプリ</title>
+<style>
+html { -webkit-text-size-adjust: 100%; }
+:root { padding-top: env(safe-area-inset-top, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+/* Layout: one phone-width column per tab (分析・レポート・記録・設定). The tab bar is fixed to the bottom edge; on 分析 the transport sits just above it so the plots stay in view while playing. */
+:root {
+  --bg: #f2f4f8;
+  --surface: #ffffff;
+  --ink: #17202e;
+  --muted: #586374;
+  --line: #d5dbe5;
+  --accent: #3547c9;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1e5fa;
+  --mark: #b06400;
+  --band: rgba(214, 150, 20, 0.2);
+  --ok: #156f44;    --ok-bg: #dff3e8;
+  --warn: #7d5200;  --warn-bg: #fbeccb;
+  --ng: #ad241c;    --ng-bg: #fbe3e0;
+  --idle: #586374;  --idle-bg: #e6eaf0;
+  --font-text: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+  --font-data: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --tabbar-h: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f131a; --surface: #181e28; --ink: #e7ecf3; --muted: #9ba7b8; --line: #2c3544;
+    --accent: #93a2ff; --accent-ink: #0c1122; --accent-soft: #252d52; --mark: #f2c260;
+    --band: rgba(242, 194, 96, 0.18); --ok: #62d49b; --ok-bg: #143324; --warn: #f2c260; --warn-bg: #3a2c0e;
+    --ng: #ff8f85; --ng-bg: #3c1a17; --idle: #9ba7b8; --idle-bg: #232b38;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f131a; --surface: #181e28; --ink: #e7ecf3; --muted: #9ba7b8; --line: #2c3544;
+  --accent: #93a2ff; --accent-ink: #0c1122; --accent-soft: #252d52; --mark: #f2c260;
+  --band: rgba(242, 194, 96, 0.18); --ok: #62d49b; --ok-bg: #143324; --warn: #f2c260; --warn-bg: #3a2c0e;
+  --ng: #ff8f85; --ng-bg: #3c1a17; --idle: #9ba7b8; --idle-bg: #232b38;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-text); font-size: 15px; line-height: 1.65;
+  padding-block: 16px calc(var(--tabbar-h) + 96px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.view { display: flex; flex-direction: column; gap: 14px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { font-size: 20px; margin: 0; line-height: 1.3; }
+.stage { font-size: 12px; color: var(--muted); letter-spacing: 0.06em; white-space: nowrap; }
+section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+h2 { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0.06em; margin: 0; }
+h3 { font-size: 16px; margin: 0; line-height: 1.4; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row-label { font-size: 12px; color: var(--muted); width: 100%; margin-bottom: -4px; }
+button, label.btn {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 6px 14px;
+  border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; text-align: center;
+}
+button[aria-pressed="true"] { background: var(--accent-soft); }
+button.primary { background: var(--accent); color: var(--accent-ink); }
+button.small { min-height: 36px; font-size: 13px; padding: 4px 12px; }
+button.danger { border-color: var(--ng); color: var(--ng); }
+button:disabled { opacity: 0.45; cursor: default; }
+button:focus-visible, label.btn:focus-within, input:focus-visible, select:focus-visible, tr[tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.now { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.now b { font-weight: 600; }
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+.note.err { color: var(--ng); }
+.opts { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+label.check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; min-height: 32px; }
+label.check input { width: 18px; height: 18px; accent-color: var(--accent); }
+label.sel { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+select, input[type="text"], input[type="number"] { font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-height: 32px; }
+input[type="text"] { width: 100%; min-height: 40px; font-size: 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--accent); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; min-height: 34px; font-size: 13px; padding: 4px 12px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+dl.readouts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+dl.readouts > div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+dl.readouts dt { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+dl.readouts dd { margin: 0; font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+dl.readouts dd small { display: block; font-family: var(--font-text); font-size: 11px; font-weight: 400; color: var(--muted); min-height: 1.6em; overflow: hidden; text-overflow: ellipsis; }
+.plot { position: relative; height: 170px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.plot canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.plot .off { visibility: hidden; }
+.sg-axis span { position: absolute; left: 4px; font-family: var(--font-data); font-size: 10px; color: var(--ink); background: var(--surface); padding: 0 3px; border-radius: 3px; opacity: 0.85; transform: translateY(-50%); }
+.sg-axis i { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--mark); }
+#trace { width: 100%; height: 200px; display: block; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+#harm { width: 100%; height: 150px; display: block; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+dl.summary { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+dl.summary dt { font-size: 11px; color: var(--muted); }
+dl.summary dd { margin: 0; font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
+dl.summary dd small { font-family: var(--font-text); font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+.table-wrap { overflow-x: auto; }
+.table-wrap.tall { max-height: 320px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 3px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+th { font-size: 11px; font-weight: 600; color: var(--muted); position: sticky; top: 0; background: var(--surface); }
+th:first-child, td:first-child { text-align: left; }
+td.num { font-family: var(--font-data); }
+td.name { font-weight: 600; text-align: left; }
+#notesBody tr { cursor: pointer; }
+#notesBody tr[aria-current="true"] td { background: var(--accent-soft); }
+.verdict, .state { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.verdict.ok, .state.good { color: var(--ok); background: var(--ok-bg); }
+.verdict.ng, .state.bad { color: var(--ng); background: var(--ng-bg); }
+.state.warn { color: var(--warn); background: var(--warn-bg); }
+.state.na { color: var(--idle); background: var(--idle-bg); }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+
+/* report */
+.rep-head { display: flex; flex-direction: column; gap: 4px; }
+.rep-head .meta { font-size: 12px; color: var(--muted); }
+.lead { margin: 0; font-size: 15px; }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.metrics { display: flex; flex-direction: column; gap: 0; }
+.metric { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.metric:last-child { border-bottom: 0; }
+.m-label { font-size: 14px; font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.m-val { font-family: var(--font-data); font-size: 15px; font-weight: 600; text-align: right; white-space: nowrap; }
+.m-sub { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.bandbar { grid-column: 1 / -1; position: relative; height: 12px; border-radius: 6px; background: var(--idle-bg); margin-top: 4px; }
+.bandbar i { position: absolute; top: 0; bottom: 0; border-radius: 6px; }
+.bandbar i.z-ok { background: var(--warn-bg); }
+.bandbar i.z-good { background: var(--ok-bg); border: 1px solid var(--ok); }
+.bandbar b { position: absolute; top: -4px; width: 4px; height: 20px; margin-left: -2px; border-radius: 2px; background: var(--ink); }
+.bandbar b.out { background: var(--ng); }
+.axis { grid-column: 1 / -1; display: flex; justify-content: space-between; font-family: var(--font-data); font-size: 10px; color: var(--muted); }
+ul.plain { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+.advice { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.advice:last-child { border-bottom: 0; }
+.advice h4 { margin: 0; font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.advice dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 14px; }
+.advice dt { color: var(--muted); font-size: 12px; padding-top: 2px; white-space: nowrap; }
+.advice dd { margin: 0; }
+.rel-row { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
+.rel-row .state { flex: none; }
+textarea { width: 100%; min-height: 160px; resize: vertical; font-family: var(--font-data); font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.hist { display: flex; flex-direction: column; gap: 8px; }
+.hist-item { display: flex; flex-direction: column; gap: 6px; }
+.hist-item .title { font-weight: 600; overflow-wrap: anywhere; }
+.hist-item .meta { font-size: 12px; color: var(--muted); }
+.hist-item .vals { font-family: var(--font-data); font-size: 13px; }
+.crit-list { display: flex; flex-direction: column; }
+.crit-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.crit-row:last-child { border-bottom: 0; }
+.crit-name { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; font-weight: 600; }
+.crit-range { display: grid; grid-template-columns: 3em minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: center; }
+.crit-lab { font-size: 12px; color: var(--muted); }
+.crit-sep { color: var(--muted); }
+.crit-range input[type="number"] { width: 100%; min-width: 0; text-align: right; font-family: var(--font-data); font-size: 16px; }
+.cond-list { display: flex; flex-direction: column; gap: 8px; }
+.cond { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; align-items: baseline; font-size: 14px; }
+.cond b { font-weight: 600; }
+.cond .state { grid-row: span 2; align-self: start; margin-top: 2px; }
+.cond span.txt { grid-column: 2; font-size: 13px; color: var(--muted); }
+details.tips summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); min-height: 32px; display: flex; align-items: center; }
+details.tips ul { font-size: 13px; margin-top: 6px; }
+.drone-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+#btnDrone { min-width: 96px; }
+#btnDrone[aria-pressed="true"] { background: var(--mark); border-color: var(--mark); color: var(--surface); }
+.drone-hz { font-family: var(--font-data); font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.drone-vol input { width: 120px; accent-color: var(--accent); }
+.pick { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; min-height: 36px; }
+.pick input { width: 20px; height: 20px; accent-color: var(--accent); }
+.hist-item[data-picked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cmp-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 13px; align-items: baseline; }
+.cmp-key { font-family: var(--font-data); font-weight: 700; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; }
+.cmp-key.a { border: 2px solid var(--ink); color: var(--ink); }
+.cmp-key.b { background: var(--accent); color: var(--accent-ink); }
+.cmp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cmp-row:last-child { border-bottom: 0; }
+.cmp-vals { grid-column: 1 / -1; font-family: var(--font-data); font-size: 13px; font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.state.better { color: var(--ok); background: var(--ok-bg); }
+.state.worse { color: var(--ng); background: var(--ng-bg); }
+.state.same, .state.keep { color: var(--idle); background: var(--idle-bg); }
+.bandbar b.mk-a { background: var(--surface); border: 2px solid var(--ink); width: 10px; height: 10px; top: 1px; margin-left: -5px; border-radius: 50%; }
+#btnRec { min-width: 140px; }
+label.btn:has(input:disabled) { opacity: 0.45; cursor: default; }
+#btnRec[aria-pressed="true"] { background: var(--ng); border-color: var(--ng); color: var(--surface); }
+.rec-status { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--font-data); font-size: 15px; font-weight: 600; color: var(--ng); }
+.rec-status::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--ng); animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .rec-status::before { animation: none; } }
+.empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 14px; }
+
+/* bottom bars */
+.transport {
+  position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); z-index: 5;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-block: 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.transport-in { max-width: 560px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+#btnPlay { flex: none; min-width: 92px; min-height: 48px; font-size: 15px; }
+.seek { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.seek input { width: 100%; height: 28px; margin: 0; accent-color: var(--accent); }
+#time { font-family: var(--font-data); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+nav.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+nav.tabbar .in { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); height: var(--tabbar-h); }
+nav.tabbar button { border: 0; border-radius: 0; min-height: 0; height: 100%; font-size: 13px; color: var(--muted); background: transparent; flex-direction: column; gap: 2px; position: relative; }
+nav.tabbar button[aria-selected="true"] { color: var(--accent); }
+nav.tabbar button[aria-selected="true"]::before { content: ""; position: absolute; top: 0; left: 25%; right: 25%; height: 3px; border-radius: 0 0 3px 3px; background: var(--accent); }
+nav.tabbar .dot { position: absolute; top: 10px; right: calc(50% - 26px); width: 7px; height: 7px; border-radius: 50%; background: var(--mark); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>歌声分析アプリ</h1>
+    <span class="stage">Web版　マイク対応</span>
+  </header>
+
+  <!-- ========== 分析 ========== -->
+  <div class="view" id="view-analyze" role="tabpanel" aria-labelledby="tab-analyze">
+    <section aria-labelledby="h-src">
+      <h2 id="h-src">音源</h2>
+      <div class="panel">
+        <p class="now">いまの音源：<b id="srcName">テスト音</b></p>
+        <div class="row">
+          <button type="button" class="primary" id="btnRec" aria-pressed="false">マイクで録る</button>
+          <label class="btn" for="fileInput">ファイルを選ぶ
+            <input class="visually-hidden" id="fileInput" type="file" accept="audio/*,.m4a,.mp4,.mp3,.wav,.aif,.aiff,.caf,.flac">
+          </label>
+        </div>
+        <div class="row" role="group" aria-labelledby="toneLabel">
+          <span class="row-label" id="toneLabel">答えのわかっているテスト音</span>
+          <button type="button" class="tone small" data-tone="sine440" aria-pressed="false">440Hz</button>
+          <button type="button" class="tone small" data-tone="harm220" aria-pressed="false">220Hz 倍音</button>
+          <button type="button" class="tone small" data-tone="vib220" aria-pressed="true">ビブラート</button>
+          <button type="button" class="tone small" data-tone="steps" aria-pressed="false">音程のずれ</button>
+          <button type="button" class="tone small" data-tone="breathy" aria-pressed="false">雑音まじり</button>
+        </div>
+        <div class="opts">
+          <div class="seg" role="group" aria-label="モード">
+            <button type="button" id="modeSolo" aria-pressed="true">ソロ</button>
+            <button type="button" id="modeChoir" aria-pressed="false">合唱</button>
+          </div>
+          <label class="sel" for="selVoice">声種
+            <select id="selVoice">
+              <option value="S">ソプラノ</option>
+              <option value="A">アルト</option>
+              <option value="T" selected>テノール</option>
+              <option value="B">バス</option>
+            </select>
+          </label>
+          <label class="sel" for="selA4">A =
+            <select id="selA4">
+              <option value="415">415</option>
+              <option value="438">438</option>
+              <option value="440" selected>440</option>
+              <option value="441">441</option>
+              <option value="442">442</option>
+              <option value="443">443</option>
+            </select> Hz
+          </label>
+        </div>
+        <label class="field" for="memo">曲名・メモ（記録に残ります）
+          <input type="text" id="memo" maxlength="80" placeholder="例：アヴェ・ヴェルム・コルプス 冒頭" autocomplete="off">
+        </label>
+        <label class="check" for="chkSound"><input type="checkbox" id="chkSound" checked>スピーカーから音を出す</label>
+        <p class="rec-status" id="recStatus" role="status" hidden>録音中 0:00</p>
+        <p class="note">「マイクで録る」を押すと、歌っている間に音程と響きをリアルタイムで表示します。止めると録音全体を解析してレポートを作ります。録音した音声は端末の外に送りません。</p>
+        <p class="note" id="srcNote"></p>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-cond">
+      <div class="sec-head">
+        <h2 id="h-cond">録音条件のチェック</h2>
+        <span class="state na" id="condLevel">未実施</span>
+      </div>
+      <div class="panel">
+        <div class="cond-list" id="condList"></div>
+        <details class="tips">
+          <summary>うまく録るためのコツ</summary>
+          <ul class="plain">
+            <li>静かな部屋で、口からスマートフォンまで約30cm離して録ります。毎回同じ場所・同じ距離にすると、記録どうしを比べやすくなります。</li>
+            <li>「マイクで録る」を押したら、歌い始める前に3秒ほど黙っておきます。周囲の雑音の大きさを測れます。</li>
+            <li>ボイスメモで録ったファイルを読み込む場合は、音質を「ロスレス」にすると響きの値が正確になります（iPhoneの「設定」→「アプリ」→「ボイスメモ」→「オーディオの音質」）。</li>
+            <li>録音中に基準音を鳴らすときは、イヤホンで聴きます。スピーカーから鳴らすと声と一緒に録音され、分析が乱れます。</li>
+            <li>伴奏や他の人の声が入らないようにします。1人の声だけが対象です。</li>
+          </ul>
+        </details>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-drone">
+      <h2 id="h-drone">基準音</h2>
+      <div class="panel">
+        <div class="drone-row">
+          <button type="button" class="primary" id="btnDrone" aria-pressed="false">鳴らす</button>
+          <label class="sel" for="droneNote">音
+            <select id="droneNote"></select>
+          </label>
+          <label class="sel" for="droneOct">オクターブ
+            <select id="droneOct"></select>
+          </label>
+          <span class="drone-hz" id="droneHz">220.0 Hz</span>
+        </div>
+        <div class="row">
+          <button type="button" class="small" id="btnDroneMatch" disabled>いまの音に合わせる</button>
+          <button type="button" class="small" id="btnDroneDown" aria-label="半音下げる">半音 −</button>
+          <button type="button" class="small" id="btnDroneUp" aria-label="半音上げる">半音 ＋</button>
+        </div>
+        <div class="opts">
+          <label class="sel drone-vol" for="droneVol">音量 <input type="range" id="droneVol" min="0" max="100" value="40"></label>
+          <label class="check" for="droneFifth"><input type="checkbox" id="droneFifth">5度上を重ねる（純正）</label>
+        </div>
+        <p class="note" id="droneNoteText">基準ピッチ（A＝）の設定に合わせて鳴ります。録音の再生と同時に鳴らすと、音程のずれを耳で確かめられます。「いまの音に合わせる」は、再生位置で歌っている音を選びます。</p>
+      </div>
+    </section>
+
+    <dl class="readouts">
+      <div><dt>音の高さ</dt><dd id="vF0">—<small>&nbsp;</small></dd></div>
+      <div><dt>音程のずれ</dt><dd id="vDev">—<small>&nbsp;</small></dd></div>
+      <div><dt>ビブラート</dt><dd id="vVib">—<small>&nbsp;</small></dd></div>
+      <div><dt>響き（帯域比）</dt><dd id="vBand">—<small>&nbsp;</small></dd></div>
+      <div><dt>倍音の傾き</dt><dd id="vTilt">—<small>&nbsp;</small></dd></div>
+      <div><dt>澄み具合 HNR</dt><dd id="vHnr">—<small>&nbsp;</small></dd></div>
+    </dl>
+
+    <section aria-labelledby="h-trace">
+      <h2 id="h-trace">音程の動き</h2>
+      <canvas id="trace" role="img" aria-label="直近8秒の音程の動き。縦が音の高さ、横が時間"></canvas>
+      <p class="note" id="traceNote"></p>
+    </section>
+
+    <section aria-labelledby="h-spec">
+      <div class="sec-head">
+        <h2 id="h-spec">周波数ごとの強さ</h2>
+        <div class="seg" role="group" aria-label="表示の切り替え">
+          <button type="button" id="btnViewSpec" aria-pressed="true">スペクトル</button>
+          <button type="button" id="btnViewSg" aria-pressed="false">時間変化</button>
+        </div>
+      </div>
+      <div class="plot">
+        <canvas id="spec" role="img" aria-label="0から5キロヘルツの周波数スペクトル"></canvas>
+        <canvas id="sg" class="off" role="img" aria-label="スペクトログラム。横が時間、縦が周波数"></canvas>
+        <div class="sg-axis off" id="sgAxis" aria-hidden="true">
+          <i style="top:30%"></i><i style="top:50%"></i>
+          <span style="top:9px">5 kHz</span><span style="top:30%">3.5</span><span style="top:50%">2.5</span><span style="top:calc(100% - 9px)">0</span>
+        </div>
+      </div>
+      <p class="note" id="specNote">横軸は周波数（kHz）、縦軸は強さ（dB）。色の帯は2.5〜3.5kHz（歌手のフォルマントの範囲）、点は倍音の位置です。</p>
+    </section>
+
+    <section aria-labelledby="h-harm">
+      <h2 id="h-harm">倍音ごとの強さ</h2>
+      <canvas id="harm" role="img" aria-label="基音から第20倍音までの強さ"></canvas>
+      <p class="note">最も強い倍音を0dBとした相対値です。色の違う棒は2.5〜3.5kHzに入る倍音です。</p>
+    </section>
+
+    <section aria-labelledby="h-notes">
+      <div class="sec-head">
+        <h2 id="h-notes">音ごとの結果</h2>
+        <button type="button" class="small primary" id="btnToReport" disabled>レポートを見る</button>
+      </div>
+      <div class="panel">
+        <dl class="summary" id="summary"></dl>
+        <div class="table-wrap tall">
+          <table>
+            <thead><tr><th>時刻</th><th>音</th><th>秒</th><th>ずれ</th><th>安定性</th><th>ビブラート</th></tr></thead>
+            <tbody id="notesBody"></tbody>
+          </table>
+        </div>
+        <p class="note">行を押すと、その音から聴けます。0.25秒以上続いた音を数えています。ずれ・安定性・ビブラートの深さの単位はセントです。ずれは平均律の音からの差で、プラスが高め、マイナスが低めです。安定性はビブラートを除いた揺れの大きさ（標準偏差）で、小さいほど安定しています。ビブラートは1秒以上の音だけを測ります。</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-ver" id="verSec">
+      <h2 id="h-ver">計算の検証（テスト音）</h2>
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>項目</th><th>正しい値</th><th>測定値</th><th>判定</th></tr></thead>
+            <tbody id="verBody"></tbody>
+          </table>
+        </div>
+        <p class="note" id="verNote"></p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========== レポート ========== -->
+  <div class="view" id="view-report" role="tabpanel" aria-labelledby="tab-report" hidden>
+    <div id="reportBody"></div>
+  </div>
+
+  <!-- ========== 記録 ========== -->
+  <div class="view" id="view-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+    <section aria-labelledby="h-cmp">
+      <h2 id="h-cmp">2つの記録を比べる</h2>
+      <div id="cmpBody"></div>
+    </section>
+    <section aria-labelledby="h-hist">
+      <div class="sec-head">
+        <h2 id="h-hist">保存した記録</h2>
+        <button type="button" class="small" id="btnExportAll">すべて書き出す</button>
+      </div>
+      <p class="note">記録はこの端末のこのページの中だけに保存されます。ブラウザのデータ削除などで消えることがあるため、大事な記録は書き出して残してください。音声そのものは保存しません。</p>
+      <div class="hist" id="histList"></div>
+      <div id="histExport"></div>
+    </section>
+  </div>
+
+  <!-- ========== 設定 ========== -->
+  <div class="view" id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+    <section aria-labelledby="h-crit">
+      <div class="sec-head">
+        <h2 id="h-crit">判定の基準</h2>
+        <div class="seg" role="group" aria-label="編集するモード">
+          <button type="button" id="critSolo" aria-pressed="true">ソロ</button>
+          <button type="button" id="critChoir" aria-pressed="false">合唱</button>
+        </div>
+      </div>
+      <div class="panel">
+        <p class="note">値が「良好」の範囲に入れば良好、「許容」の範囲に入れば注意、外れれば要改善と判定します。空欄は制限なしです。「仮」は数値が研究で定まっていない基準で、アプリが仮に置いた値です。変えるとレポートにすぐ反映されます。</p>
+        <div class="crit-list" id="critBody"></div>
+        <div class="row"><button type="button" class="small" id="btnCritReset">このモードを初期値に戻す</button><span class="note" id="critNote" role="status"></span></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="transport" id="transport">
+  <div class="transport-in">
+    <button type="button" class="primary" id="btnPlay">再生</button>
+    <div class="seek">
+      <input type="range" id="seek" min="0" max="6" step="0.01" value="0" aria-label="再生位置">
+      <span id="time">0:00 / 0:06</span>
+    </div>
+  </div>
+</div>
+
+<nav class="tabbar" aria-label="画面の切り替え">
+  <div class="in" role="tablist">
+    <button type="button" role="tab" id="tab-analyze" data-view="analyze" aria-selected="true">分析</button>
+    <button type="button" role="tab" id="tab-report" data-view="report" aria-selected="false">レポート<span class="dot" id="repDot" hidden></span></button>
+    <button type="button" role="tab" id="tab-history" data-view="history" aria-selected="false">記録</button>
+    <button type="button" role="tab" id="tab-settings" data-view="settings" aria-selected="false">設定</button>
+  </div>
+</nav>
+
+<script id="dspCode">
+/*DSP-BEGIN*/
+var DSP = (function () {
+  "use strict";
+  var N = 4096, W = 2048, HALF = N / 2;
+  var hann = new Float32Array(N), wsum = 0, i;
+  for (i = 0; i < N; i++) { hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N); wsum += hann[i]; }
+  var bits = Math.round(Math.log(N) / Math.LN2), rev = new Uint16Array(N);
+  for (i = 0; i < N; i++) { var r = 0; for (var b = 0; b < bits; b++) if (i & (1 << b)) r |= 1 << (bits - 1 - b); rev[i] = r; }
+  var cosT = new Float64Array(HALF), sinT = new Float64Array(HALF);
+  for (i = 0; i < HALF; i++) { cosT[i] = Math.cos(2 * Math.PI * i / N); sinT[i] = Math.sin(2 * Math.PI * i / N); }
+  var re = new Float64Array(N), im = new Float64Array(N);
+  var NORM = 4 / (wsum * wsum);
+  function log10(v) { return Math.log(v) / Math.LN10; }
+
+  /* Hann-windowed FFT. out[k] is dB re full scale: a sine of amplitude 1 on a bin centre reads 0 dB. */
+  function spectrum(x, out) {
+    var k, size, half, step, a, c, j, t, tr, ti;
+    for (k = 0; k < N; k++) { re[rev[k]] = x[k] * hann[k]; im[k] = 0; }
+    for (size = 2; size <= N; size <<= 1) {
+      half = size >> 1; step = N / size;
+      for (k = 0; k < N; k += size) {
+        for (j = 0, t = 0; j < half; j++, t += step) {
+          a = k + j; c = a + half;
+          tr = re[c] * cosT[t] + im[c] * sinT[t];
+          ti = im[c] * cosT[t] - re[c] * sinT[t];
+          re[c] = re[a] - tr; im[c] = im[a] - ti; re[a] += tr; im[a] += ti;
+        }
+      }
+    }
+    for (k = 0; k < HALF; k++) out[k] = 10 * log10((re[k] * re[k] + im[k] * im[k]) * NORM + 1e-20);
+    return out;
+  }
+  function peakNear(spec, centre, hw) {
+    var lo = Math.max(1, Math.round(centre - hw)), hi = Math.min(HALF - 2, Math.round(centre + hw)), k = lo, j;
+    if (hi < lo) return null;
+    for (j = lo + 1; j <= hi; j++) if (spec[j] > spec[k]) k = j;
+    var a = spec[k - 1], b = spec[k], c = spec[k + 1], den = a - 2 * b + c, p = 0;
+    if (den < 0) { p = 0.5 * (a - c) / den; if (p > 0.5) p = 0.5; if (p < -0.5) p = -0.5; }
+    return { bin: k + p, db: b - 0.25 * (a - c) * p };
+  }
+  function globalPeak(spec, sr, fLo, fHi) {
+    var binHz = sr / N, lo = fLo / binHz, hi = fHi / binHz;
+    var p = peakNear(spec, (lo + hi) / 2, (hi - lo) / 2);
+    return p ? { f: p.bin * binHz, db: p.db } : null;
+  }
+  function harmonics(spec, f0, sr, count) {
+    var binHz = sr / N, out = [], hw = Math.max(1, Math.min(3, Math.round(f0 / binHz * 0.4))), k, p;
+    for (k = 1; k <= count; k++) {
+      if (k * f0 >= sr / 2 - 2 * binHz) break;
+      p = peakNear(spec, k * f0 / binHz, hw);
+      if (!p) break;
+      out.push({ n: k, f: p.bin * binHz, db: p.db });
+    }
+    return out;
+  }
+  function rms(x) { var s = 0; for (var k = 0; k < x.length; k++) s += x[k] * x[k]; return Math.sqrt(s / x.length); }
+
+  /* Level of each harmonic as the energy within ±f0/2 of it. Unlike the peak height, this does not drop when
+     vibrato smears a high harmonic across several bins. Divided by 1.5 (the Hann window's noise bandwidth in bins)
+     so a steady sine reads the same as its peak. */
+  function harmonicLevels(spec, f0, sr, fmax) {
+    var binHz = sr / N, out = [], h, c, half = 0.5 * f0 / binHz, k, s, lo, hi;
+    for (h = 1; h * f0 <= fmax && h * f0 < sr / 2 - f0; h++) {
+      c = h * f0 / binHz; lo = Math.max(1, Math.ceil(c - half)); hi = Math.min(HALF - 1, Math.floor(c + half - 1e-9));
+      for (s = 0, k = lo; k <= hi; k++) s += Math.pow(10, spec[k] / 10);
+      out.push({ n: h, f: h * f0, db: 10 * log10(s / 1.5 + 1e-20) });
+    }
+    return out;
+  }
+  /* Timbre from one spectrum.
+     spr  = strongest harmonic 2–4 kHz minus strongest harmonic 0–2 kHz (dB). Closer to 0 = stronger high partials (Omori et al. 1996 report the same difference with the opposite sign).
+     band = energy 2.5–3.5 kHz relative to energy 50 Hz–5 kHz (dB): the singer's-formant region.
+     tilt = slope of harmonic levels against log2 frequency up to 5 kHz (dB per octave). */
+  function timbre(spec, f0, sr) {
+    var binHz = sr / N;
+    function bins(f1, f2) { return [Math.max(1, Math.round(f1 / binHz)), Math.min(HALF - 1, Math.round(f2 / binHz))]; }
+    function powIn(f1, f2) { var r = bins(f1, f2), s = 0; for (var k = r[0]; k <= r[1]; k++) s += Math.pow(10, spec[k] / 10); return s; }
+    var all = harmonicLevels(spec, f0, sr, 5000), hiMax = -Infinity, loMax = -Infinity;
+    all.forEach(function (h) { if (h.f >= 2000 && h.f <= 4000 && h.db > hiMax) hiMax = h.db; if (h.f >= 50 && h.f < 2000 && h.db > loMax) loMax = h.db; });
+    var spr = isFinite(hiMax) && isFinite(loMax) ? hiMax - loMax : NaN;
+    var band = 10 * log10(powIn(2500, 3500) / powIn(50, 5000));
+    var hs = all, top = -Infinity, tilt = NaN;
+    hs.forEach(function (h) { if (h.db > top) top = h.db; });
+    hs = hs.filter(function (h) { return h.db > top - 60; });
+    if (hs.length >= 4) {
+      var mx = 0, my = 0, sxx = 0, sxy = 0;
+      hs.forEach(function (h) { mx += Math.log(h.f) / Math.LN2; my += h.db; });
+      mx /= hs.length; my /= hs.length;
+      hs.forEach(function (h) { var x = Math.log(h.f) / Math.LN2 - mx; sxx += x * x; sxy += x * (h.db - my); });
+      tilt = sxy / sxx;
+    }
+    return { spr: spr, band: band, tilt: tilt };
+  }
+  /* Harmonics-to-noise ratio from the normalised correlation of the signal with itself one period later.
+     The window is short (2 periods, at least 12 ms) and the lag is fine-tuned within ±2 % of the period,
+     so vibrato, which changes the period from cycle to cycle, is not mistaken for noise. */
+  function corrAt(x, s0, L, T) {
+    var ti = Math.floor(T), fr = T - ti, j, a, b, sab = 0, saa = 0, sbb = 0;
+    for (j = 0; j < L; j++) { a = x[s0 + j]; b = x[s0 + j + ti] * (1 - fr) + x[s0 + j + ti + 1] * fr; sab += a * b; saa += a * a; sbb += b * b; }
+    return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : NaN;
+  }
+  function hnr(x, centre, f0, sr) {
+    var T0 = sr / f0, L = Math.max(Math.round(2 * T0), Math.round(0.012 * sr)), k, r = -1, v, T;
+    var s0 = Math.round(centre - (L + T0) / 2);
+    if (s0 < 0 || s0 + L + Math.ceil(T0 * 1.02) + 2 > x.length) return NaN;
+    for (k = -8; k <= 8; k++) { T = T0 * (1 + k * 0.0025); v = corrAt(x, s0, L, T); if (v > r) r = v; }
+    if (!isFinite(r)) return NaN;
+    if (r > 0.9999) r = 0.9999;
+    if (r < 0.0909) return -10;
+    return 10 * log10(r / (1 - r));
+  }
+
+  var dbuf = new Float64Array(W + 2);
+  function yin(x, sr, fmin, fmax) {
+    var tauMax = Math.min(Math.floor(sr / fmin), W, N - W), tauMin = Math.max(2, Math.floor(sr / fmax));
+    var base = N - W - tauMax, tau, j, s, d, run = 0, pick = -1, TH = 0.12;
+    dbuf[0] = 1;
+    for (tau = 1; tau <= tauMax; tau++) {
+      s = 0;
+      for (j = 0; j < W; j++) { d = x[base + j] - x[base + j + tau]; s += d * d; }
+      run += s;
+      dbuf[tau] = run > 0 ? s * tau / run : 1;
+    }
+    for (tau = tauMin; tau < tauMax; tau++) {
+      if (dbuf[tau] < TH) { while (tau + 1 < tauMax && dbuf[tau + 1] < dbuf[tau]) tau++; pick = tau; break; }
+    }
+    if (pick < 0) {
+      pick = tauMin;
+      for (tau = tauMin + 1; tau < tauMax; tau++) if (dbuf[tau] < dbuf[pick]) pick = tau;
+      if (dbuf[pick] > 0.35) return null;
+    }
+    var a = dbuf[pick - 1], b = dbuf[pick], c = dbuf[pick + 1], den = a - 2 * b + c, p = 0;
+    if (pick > tauMin && den > 0) { p = 0.5 * (a - c) / den; if (p > 0.5) p = 0.5; if (p < -0.5) p = -0.5; }
+    return { f: sr / (pick + p), clarity: 1 - b };
+  }
+
+  /* Test tones with known answers. Frequencies in Hz, vibrato rate in Hz, vibrato extent in cents. */
+  var C4s = 440 * Math.pow(2, -820 / 1200), E4p = 440 * Math.pow(2, -485 / 1200);
+  var TONES = {
+    sine440: { label: "テスト音 440Hzの正弦波", harm: 1, amp: 0.3, parts: [{ f: 440, dur: 6 }],
+      about: "440Hzの正弦波です。スペクトルの山が1本、440Hzの位置に出れば正しく動いています。" },
+    harm220: { label: "テスト音 220Hz 倍音つき", harm: 20, parts: [{ f: 220, dur: 6 }],
+      about: "220Hzの音に20本の倍音を重ねた音です。倍音は1オクターブごとに6dBずつ弱くなります。響きの指標の答えも計算できます。" },
+    vib220: { label: "テスト音 ビブラート（220Hz・6Hz・±50セント）", harm: 20, parts: [{ f: 220, dur: 6, vr: 6, ve: 50 }],
+      about: "220Hz（A3）を中心に、毎秒6回、上下50セントずつ揺れる音です。ずれ0、速さ6Hz、深さ±50セントと出れば正しく動いています。" },
+    steps: { label: "テスト音 音程のずれ（A3・C♯4・E4）", harm: 20,
+      parts: [{ f: 220, dur: 2 }, { gap: 0.15 }, { f: C4s, dur: 2 }, { gap: 0.15 }, { f: E4p, dur: 2 }],
+      about: "A3をぴったり、C♯4を20セント低く、E4を15セント高く、2秒ずつ伸ばした音です。ビブラートはありません。" },
+    breathy: { label: "テスト音 雑音まじり（220Hz・HNR 10dB）", harm: 20, snr: 10, parts: [{ f: 220, dur: 6 }],
+      about: "220Hzの倍音つきの音に、音の10分の1の強さの雑音を混ぜた音です。HNRが10dB前後と出れば正しく動いています。" }
+  };
+  function synth(kind, sr) {
+    var t = TONES[kind], total = 0, pos = 0, peak = 0, k;
+    t.parts.forEach(function (p) { total += p.dur || p.gap; });
+    var out = new Float32Array(Math.round(total * sr));
+    t.parts.forEach(function (p) {
+      var len = Math.round((p.dur || p.gap) * sr), fade = Math.round(0.01 * sr), ph = 0, h, v, f, env;
+      if (p.f) {
+        var H = Math.max(1, Math.min(t.harm, Math.floor(0.45 * sr / (p.f * Math.pow(2, (p.ve || 0) / 1200)))));
+        for (k = 0; k < len; k++) {
+          f = p.vr ? p.f * Math.pow(2, p.ve * Math.sin(2 * Math.PI * p.vr * k / sr) / 1200) : p.f;
+          ph += 2 * Math.PI * f / sr;
+          for (v = 0, h = 1; h <= H; h++) v += Math.sin(h * ph) / h;
+          env = Math.min(1, k / fade, (len - 1 - k) / fade);
+          out[pos + k] = v * env;
+        }
+      }
+      pos += len;
+    });
+    if (t.snr) {
+      /* Seeded white noise at the stated signal-to-noise ratio, so the answer never changes. */
+      var s = 0, seed = 12345, a, g;
+      for (k = 0; k < out.length; k++) s += out[k] * out[k];
+      a = Math.sqrt(s / out.length) / Math.pow(10, t.snr / 20) * Math.sqrt(3);
+      for (k = 0; k < out.length; k++) { seed = (seed * 1664525 + 1013904223) >>> 0; g = seed / 4294967296 * 2 - 1; out[k] += a * g; }
+    }
+    if (t.amp) { for (k = 0; k < out.length; k++) out[k] *= t.amp; }
+    else {
+      for (k = 0; k < out.length; k++) if (Math.abs(out[k]) > peak) peak = Math.abs(out[k]);
+      for (k = 0; k < out.length; k++) out[k] *= 0.5 / peak;
+    }
+    return out;
+  }
+  return { N: N, spectrum: spectrum, peakNear: peakNear, globalPeak: globalPeak, harmonics: harmonics, rms: rms, yin: yin, timbre: timbre, hnr: hnr, TONES: TONES, synth: synth };
+})();
+/*DSP-END*/
+</script>
+
+<!-- Whole-file analysis. Runs in a Web Worker after the DSP code above; the same text runs on the page if a worker cannot start. -->
+<script type="text/plain" id="trackSrc">
+self.onmessage = function (ev) {
+  var m = ev.data, x = m.x, sr = m.sr, job = m.job;
+  var HOP = Math.round(sr * 0.01), W = Math.round(sr * 0.02), MSTEP = 5;
+  var tauMax = Math.floor(sr / 60), tauMin = Math.max(2, Math.floor(sr / 1400));
+  var span = W + tauMax, n = x.length >= span ? Math.floor((x.length - span) / HOP) + 1 : 0;
+  var f0 = new Float32Array(n), lev = new Float32Array(n), d = new Float64Array(tauMax + 2);
+  var mN = Math.ceil(n / MSTEP), spr = new Float32Array(mN), band = new Float32Array(mN), tilt = new Float32Array(mN), hnr = new Float32Array(mN);
+  var TH = 0.12, i = 0, q = 0, BATCH = 300, maxLev = 0, clip = 0, k0, j0, s0, v0;
+
+  /* YIN (de Cheveigné & Kawahara 2002), stopping at the first dip below the threshold. */
+  function yin(base) {
+    var run = 0, tau, j, s, df, c, pick = -1, gmin = -1;
+    d[0] = 1;
+    for (tau = 1; tau <= tauMax; tau++) {
+      s = 0;
+      for (j = 0; j < W; j++) { df = x[base + j] - x[base + j + tau]; s += df * df; }
+      run += s;
+      d[tau] = run > 0 ? s * tau / run : 1;
+      c = tau - 1;
+      if (c >= tauMin) {
+        if (gmin < 0 || d[c] < d[gmin]) gmin = c;
+        if (d[c] < TH && d[tau] >= d[c]) { pick = c; break; }
+      }
+    }
+    if (pick < 0) { if (gmin < 0 || d[gmin] > 0.35) return NaN; pick = gmin; }
+    var a = d[pick - 1], b = d[pick], cc = d[pick + 1], den = a - 2 * b + cc, p = 0;
+    if (pick > tauMin && den > 0) { p = 0.5 * (a - cc) / den; if (p > 0.5) p = 0.5; if (p < -0.5) p = -0.5; }
+    return sr / (pick + p);
+  }
+
+  /* Pass 1: frame levels, so silent frames skip the pitch search; and clipped samples. */
+  for (k0 = 0; k0 < n; k0++) {
+    s0 = 0;
+    for (j0 = 0; j0 < span; j0++) { v0 = x[k0 * HOP + j0]; s0 += v0 * v0; }
+    lev[k0] = Math.sqrt(s0 / span); if (lev[k0] > maxLev) maxLev = lev[k0];
+  }
+  for (k0 = 0; k0 < x.length; k0++) if (x[k0] >= 0.999 || x[k0] <= -0.999) clip++;
+  var gate = Math.max(maxLev * 0.01, 5.6e-4);
+
+  function cleanUp() {
+    var cents = new Float64Array(n), nb = [], k, j;
+    for (k = 0; k < n; k++) cents[k] = f0[k] > 0 ? 1200 * Math.log(f0[k] / 440) / Math.LN2 : NaN;
+    for (k = 0; k < n; k++) {
+      if (isNaN(cents[k])) continue;
+      nb.length = 0;
+      for (j = k - 5; j <= k + 5; j++) if (j !== k && j >= 0 && j < n && !isNaN(cents[j])) nb.push(cents[j]);
+      if (nb.length < 3) continue;
+      nb.sort(function (p, q) { return p - q; });
+      var med = nb[nb.length >> 1], diff = cents[k] - med;
+      if (Math.abs(diff) > 300) {
+        if (Math.abs(diff - 1200) < 150) f0[k] /= 2;
+        else if (Math.abs(diff + 1200) < 150) f0[k] *= 2;
+        else f0[k] = NaN;
+      }
+    }
+  }
+
+  /* Pass 3: timbre and HNR every 50 ms on voiced frames. */
+  var fbuf = new Float32Array(DSP.N), sbuf = new Float32Array(DSP.N / 2);
+  function timbreStep() {
+    if (self.isStale && self.isStale()) return;
+    var end = Math.min(mN, q + 60), k, f, centre, start, j, t;
+    for (; q < end; q++) {
+      k = q * MSTEP; f = f0[k]; spr[q] = band[q] = tilt[q] = hnr[q] = NaN;
+      if (!(f > 0)) continue;
+      centre = k * HOP + span / 2; start = Math.round(centre - DSP.N / 2);
+      if (start < 0 || start + DSP.N > x.length) continue;
+      for (j = 0; j < DSP.N; j++) fbuf[j] = x[start + j];
+      DSP.spectrum(fbuf, sbuf);
+      t = DSP.timbre(sbuf, f, sr);
+      spr[q] = t.spr; band[q] = t.band; tilt[q] = t.tilt;
+      hnr[q] = DSP.hnr(x, centre, f, sr);
+    }
+    if (q < mN) { self.postMessage({ job: job, type: "progress", p: 0.85 + 0.15 * q / mN }); setTimeout(timbreStep, 0); return; }
+    for (k = 0; k < n; k++) lev[k] = lev[k] > 0 ? 20 * Math.log(lev[k]) / Math.LN10 : -200;
+    self.postMessage({ job: job, type: "done", f0: f0, level: lev, t0: span / 2 / sr, hop: HOP / sr, win: W / sr,
+      mstep: MSTEP, spr: spr, band: band, tilt: tilt, hnr: hnr, clip: x.length ? clip / x.length : 0, samples: x.length },
+      [f0.buffer, lev.buffer, spr.buffer, band.buffer, tilt.buffer, hnr.buffer]);
+  }
+
+  /* Pass 2: pitch, in batches so progress can be reported. */
+  function step() {
+    if (self.isStale && self.isStale()) return;
+    var end = Math.min(n, i + BATCH);
+    for (; i < end; i++) f0[i] = lev[i] > gate ? yin(i * HOP) : NaN;
+    if (i < n) { self.postMessage({ job: job, type: "progress", p: 0.85 * i / n }); setTimeout(step, 0); return; }
+    cleanUp();
+    timbreStep();
+  }
+  step();
+};
+</script>
+
+<script>
+/*PITCH-BEGIN*/
+/* Turns a pitch track into notes, then measures each note's mean pitch, stability and vibrato. */
+var PITCH = (function () {
+  "use strict";
+  var NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+  function toC(f) { return 6900 + 1200 * Math.log(f / 440) / Math.LN2; }
+  function fromC(c) { return 440 * Math.pow(2, (c - 6900) / 1200); }
+  function nameOf(c) { var m = Math.round(c / 100); return NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+  function a4off(a4) { return 1200 * Math.log(a4 / 440) / Math.LN2; }
+  function rel(c, a4) {
+    var off = a4off(a4), r = c - off, t = Math.round(r / 100) * 100;
+    return { name: nameOf(t), dev: r - t, tgt: t + off };
+  }
+  function ma(src, dst, lo, hi, half) {
+    var pre = new Float64Array(hi - lo + 2), k, h;
+    for (k = lo; k <= hi; k++) pre[k - lo + 1] = pre[k - lo] + src[k];
+    for (k = lo; k <= hi; k++) {
+      h = Math.min(half, k - lo, hi - k);
+      dst[k] = (pre[k + h - lo + 1] - pre[k - h - lo]) / (2 * h + 1);
+    }
+  }
+  /* Moving average exactly L frames wide (L may be fractional). One vibrato period long, it cancels the vibrato. */
+  function maExact(src, dst, lo, hi, L) {
+    var m = Math.max(0, Math.floor((L - 1) / 2)), w = (L - 2 * m - 1) / 2, k, j, s, mm, ww;
+    for (k = lo; k <= hi; k++) {
+      mm = Math.min(m, k - lo, hi - k); ww = mm === m && k - m - 1 >= lo && k + m + 1 <= hi ? w : 0;
+      for (s = 0, j = -mm; j <= mm; j++) s += src[k + j];
+      if (ww) s += ww * (src[k - m - 1] + src[k + m + 1]);
+      dst[k] = s / (2 * mm + 1 + 2 * ww);
+    }
+  }
+  function mean(a, lo, hi) { var s = 0; for (var k = lo; k <= hi; k++) s += a[k]; return s / (hi - lo + 1); }
+  function std(a, lo, hi) { var m = mean(a, lo, hi), s = 0; for (var k = lo; k <= hi; k++) s += (a[k] - m) * (a[k] - m); return Math.sqrt(s / (hi - lo + 1)); }
+
+  function extrema(c, d, lo, hi, h) {
+    var out = [], state = 0, bi = -1, bv = 0, first = -1, k, v;
+    for (k = lo; k <= hi; k++) {
+      v = d[k];
+      if (state === 0) { if (v > h || v < -h) { state = v > 0 ? 1 : -1; bi = k; bv = v; first = k; } continue; }
+      if (state === 1) {
+        if (v > bv) { bi = k; bv = v; }
+        else if (v < -h) { out.push(bi); state = -1; bi = k; bv = v; }
+      } else {
+        if (v < bv) { bi = k; bv = v; }
+        else if (v > h) { out.push(bi); state = 1; bi = k; bv = v; }
+      }
+    }
+    if (out.length && out[0] === first) out.shift();
+    return out.map(function (k) {
+      var a = c[k - 1], b = c[k], e = c[k + 1], den = a - 2 * b + e, p = 0;
+      if (den !== 0) { p = 0.5 * (a - e) / den; if (p > 0.5) p = 0.5; if (p < -0.5) p = -0.5; }
+      return { i: k, t: k + p, v: b - 0.25 * (a - e) * p };
+    });
+  }
+
+  function measure(c, s2, a, b, hop, win) {
+    var len = b - a + 1, edge = Math.min(Math.round(0.1 / hop), Math.floor(len * 0.2)), lo = a + edge, hi = b - edge;
+    var note = { a: a, b: b, dur: len * hop, vib: "short", rate: 0, extent: 0, reg: 0, meanC: 0, stab: 0 };
+    var ext = [], k;
+    if (len * hop >= 1.0) {
+      var d = new Float64Array(c.length);
+      for (k = lo; k <= hi; k++) d[k] = c[k] - s2[k];
+      ext = extrema(c, d, lo, hi, 3);
+      note.vib = "none";
+      if (ext.length >= 5) {
+        var K = ext.length, span = ext[K - 1].t - ext[0].t, halves = [], amps = [];
+        for (k = 1; k < K; k++) { halves.push(ext[k].t - ext[k - 1].t); amps.push(Math.abs(ext[k].v - ext[k - 1].v) / 2); }
+        var rate = (K - 1) / (2 * span * hop), extent = amps.reduce(function (p, q) { return p + q; }, 0) / amps.length;
+        var hm = halves.reduce(function (p, q) { return p + q; }, 0) / halves.length, hs = 0;
+        halves.forEach(function (x) { hs += (x - hm) * (x - hm); });
+        /* The pitch tracker averages over its window, which shrinks the swing by sinc(π·rate·window). Undo that. */
+        var u = Math.PI * rate * win, shrink = u > 0 ? Math.sin(u) / u : 1;
+        extent /= shrink;
+        if (rate >= 3 && rate <= 10 && extent >= 8) {
+          note.vib = "yes"; note.rate = rate; note.extent = extent; note.reg = Math.sqrt(hs / halves.length) / hm;
+        }
+      }
+    }
+    if (note.vib === "yes") {
+      var last = (ext.length % 2 === 1) ? ext.length - 1 : ext.length - 2;
+      note.meanC = mean(c, ext[0].i, ext[last].i);
+      var sp = new Float64Array(c.length), sp2 = new Float64Array(c.length), L = 1 / (note.rate * hop);
+      maExact(c, sp, a, b, L); maExact(sp, sp2, a, b, L);
+      note.stab = std(sp2, lo, hi);
+    } else {
+      note.meanC = mean(c, lo, hi);
+      note.stab = std(s2, lo, hi);
+    }
+    return note;
+  }
+
+  function prepare(tr) {
+    var n = tr.f0.length, hop = tr.hop, c = new Float32Array(n), s1 = new Float32Array(n), s2 = new Float32Array(n), i, j, last = -1;
+    var halfF = Math.round(0.08 / hop), minRun = Math.round(0.25 / hop), notes = [];
+    for (i = 0; i < n; i++) { c[i] = tr.f0[i] > 0 ? toC(tr.f0[i]) : NaN; s1[i] = NaN; s2[i] = NaN; }
+    for (i = 0; i < n; i++) if (!isNaN(c[i])) {
+      if (last >= 0 && i - last > 1 && i - last <= 4) for (j = last + 1; j < i; j++) c[j] = c[last] + (c[i] - c[last]) * (j - last) / (i - last);
+      last = i;
+    }
+    i = 0;
+    while (i < n) {
+      if (isNaN(c[i])) { i++; continue; }
+      var lo = i; while (i < n && !isNaN(c[i])) i++;
+      var hi = i - 1;
+      if (hi - lo + 1 < minRun) continue;
+      ma(c, s1, lo, hi, halfF); ma(s1, s2, lo, hi, halfF);
+      var a = lo, sum = 0, cnt = 0;
+      for (j = lo; j <= hi + 1; j++) {
+        var brk = j > hi || (cnt >= 5 && Math.abs(s1[j] - sum / cnt) > 60);
+        if (brk) {
+          if (j - a >= minRun) notes.push(measure(c, s2, a, j - 1, hop, tr.win || 0));
+          a = j; sum = 0; cnt = 0;
+        }
+        if (j <= hi) { sum += s1[j]; cnt++; }
+      }
+    }
+    return { t0: tr.t0, hop: hop, n: n, c: c, s1: s1, notes: notes, level: tr.level, mstep: tr.mstep,
+      spr: tr.spr, band: tr.band, tilt: tr.tilt, hnr: tr.hnr, clip: tr.clip };
+  }
+  return { toC: toC, fromC: fromC, nameOf: nameOf, rel: rel, a4off: a4off, prepare: prepare };
+})();
+/*PITCH-END*/
+
+/*REPORT-BEGIN*/
+/* Session summary, judgement against the criteria (企画書 6章) and the written report (7章). Pure functions on plain data. */
+var REPORT = (function () {
+  "use strict";
+  function median(a) { if (!a.length) return NaN; var b = a.slice().sort(function (p, q) { return p - q; }); var m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
+  function meanOf(a) { return a.length ? a.reduce(function (p, q) { return p + q; }, 0) / a.length : NaN; }
+  function nf(v, d) { return (v < 0 ? "−" : "") + Math.abs(v).toFixed(d); }
+  function ni(v) { return (v < 0 ? "−" : "") + Math.abs(v); }
+  function r1(v) { return isFinite(v) ? Math.round(v * 10) / 10 : null; }
+  var SOPRANO_RING_MAX_C = 7200; /* C5: above this, a weak singer's formant is normal for sopranos (Sundberg 2001). */
+
+  /* ---- criteria ---- */
+  var CRIT = [
+    { key: "devAbs", label: "音程のずれ", unit: "セント", basis: "仮", axis: [0, 60],
+      solo: { g: [null, 15], a: [null, 30] }, choir: { g: [null, 15], a: [null, 30] } },
+    { key: "stab", label: "音程の安定性", unit: "セント", basis: "仮", axis: [0, 40],
+      solo: { g: [null, 10], a: [null, 20] }, choir: { g: [null, 10], a: [null, 20] } },
+    { key: "vibRate", label: "ビブラートの速さ", unit: "Hz", basis: "文献", axis: [3, 9],
+      solo: { g: [5, 7], a: [4.5, 7.5] }, choir: { g: [5, 7], a: [4.5, 7.5] } },
+    { key: "vibExt", label: "ビブラートの深さ", unit: "±セント", basis: { solo: "文献", choir: "仮" }, axis: [0, 150],
+      solo: { g: [40, 100], a: [25, 130] }, choir: { g: [null, 50], a: [null, 80] } },
+    { key: "spr", label: "SPR（高い倍音の強さ）", unit: "dB", basis: "仮", axis: [-45, 0],
+      solo: { g: [-20, null], a: [-30, null] }, choir: { g: [-32, -14], a: [-40, -10] } },
+    { key: "band", label: "響き（2.5〜3.5kHzの帯域比）", unit: "dB", basis: "仮", axis: [-50, -5],
+      solo: { g: [-25, null], a: [-35, null] }, choir: { g: [-35, -20], a: [-42, -16] } },
+    { key: "tilt", label: "倍音の傾き", unit: "dB/oct", basis: "仮", axis: [-24, 0],
+      solo: { g: [-14, null], a: [-18, null] }, choir: { g: [-16, -7], a: [-20, -4] } },
+    { key: "hnr", label: "澄み具合（HNR）", unit: "dB", basis: "仮", axis: [0, 40],
+      solo: { g: [15, null], a: [10, null] }, choir: { g: [15, null], a: [10, null] } }
+  ];
+  function defaults(mode) { var o = {}; CRIT.forEach(function (c) { o[c.key] = JSON.parse(JSON.stringify(c[mode])); }); return o; }
+  function basisOf(c, mode) { return typeof c.basis === "string" ? c.basis : c.basis[mode]; }
+
+  /* ---- session ---- */
+  function build(tr, opt) {
+    var hop = tr.hop, M = tr.mstep, notes = tr.notes, i, k;
+    function noteIdx(f) { var lo = 0, hi = notes.length - 1, m; while (lo <= hi) { m = (lo + hi) >> 1; if (notes[m].b < f) lo = m + 1; else if (notes[m].a > f) hi = m - 1; else return m; } return -1; }
+    var ns = notes.map(function (nt) {
+      return { t: r1(tr.t0 + nt.a * hop), dur: r1(nt.dur), c: r1(nt.meanC), stab: r1(nt.stab), vib: nt.vib,
+        rate: nt.vib === "yes" ? Math.round(nt.rate * 100) / 100 : null, ext: nt.vib === "yes" ? r1(nt.extent) : null };
+    });
+    /* Timbre frames inside notes. */
+    var frames = [];
+    for (k = 0; k * M < tr.n; k++) {
+      var f = k * M, ni = noteIdx(f);
+      if (ni < 0 || isNaN(tr.c[f])) continue;
+      frames.push({ t: tr.t0 + f * hop, c: tr.c[f], ni: ni, spr: tr.spr[k], band: tr.band[k], tilt: tr.tilt[k], hnr: tr.hnr[k], lev: tr.level[f] });
+    }
+    /* Reliability inputs. */
+    var unv = [], voicedLev = [];
+    for (i = 0; i < tr.n; i++) { if (isNaN(tr.c[i])) unv.push(tr.level[i]); else voicedLev.push(tr.level[i]); }
+    unv.sort(function (p, q) { return p - q; });
+    var floor = unv.length >= 20 ? unv[Math.floor(unv.length * 0.1)] : NaN;
+    var lead = NaN; for (i = 0; i < tr.n; i++) if (!isNaN(tr.c[i])) { lead = tr.t0 + i * hop; break; }
+    var tl = { hop: r1(M * hop * 1000) / 1000, t0: r1(tr.t0 * 1000) / 1000, c: [], lev: [], spr: [], band: [], tilt: [], hnr: [] };
+    for (k = 0; k * M < tr.n; k++) {
+      var g = k * M;
+      tl.c.push(r1(tr.c[g])); tl.lev.push(r1(tr.level[g])); tl.spr.push(r1(tr.spr[k])); tl.band.push(r1(tr.band[k])); tl.tilt.push(r1(tr.tilt[k])); tl.hnr.push(r1(tr.hnr[k]));
+    }
+    return {
+      v: 1, id: "s" + Date.now().toString(36), date: new Date().toISOString(), title: opt.title || "", source: opt.source || "",
+      kind: opt.kind, mode: opt.mode, voice: opt.voice, a4: opt.a4, dur: r1(opt.dur),
+      notes: ns, frames: frames.map(function (fr) { return [r1(fr.t), r1(fr.c), fr.ni, r1(fr.spr), r1(fr.band), r1(fr.tilt), r1(fr.hnr)]; }),
+      rel: { floor: r1(floor), voiced: r1(median(voicedLev)), clip: tr.clip, voicedSec: r1(ns.reduce(function (p, q) { return p + q.dur; }, 0)),
+        lead: r1(lead), kbps: opt.kbps ? Math.round(opt.kbps) : null, ext: opt.ext || null },
+      timeline: tl
+    };
+  }
+
+  /* Summary numbers for a set of notes and frames. Ring measures skip a soprano's notes above C5. */
+  function stats(s, noteSel, frameSel) {
+    var off = 1200 * Math.log(s.a4 / 440) / Math.LN2, dev = [], sgn = [], stab = [], rate = [], ext = [], longN = 0;
+    var nsel = s.notes.filter(noteSel || function () { return true; });
+    nsel.forEach(function (n) {
+      var r = n.c - off, d = r - Math.round(r / 100) * 100;
+      dev.push(Math.abs(d)); sgn.push(d); stab.push(n.stab);
+      if (n.vib !== "short") longN++;
+      if (n.vib === "yes") { rate.push(n.rate); ext.push(n.ext); }
+    });
+    var fs = s.frames.filter(frameSel || function () { return true; }), spr = [], band = [], tilt = [], hnr = [], ringSkipped = 0;
+    fs.forEach(function (f) {
+      var ringOk = !(s.voice === "S" && f[1] > SOPRANO_RING_MAX_C);
+      if (ringOk) { if (f[3] !== null) spr.push(f[3]); if (f[4] !== null) band.push(f[4]); } else ringSkipped++;
+      if (f[5] !== null) tilt.push(f[5]); if (f[6] !== null) hnr.push(f[6]);
+    });
+    return { n: nsel.length, longN: longN, devAbs: meanOf(dev), devSigned: meanOf(sgn), stab: median(stab),
+      vibRate: median(rate), vibExt: median(ext), vibN: rate.length,
+      spr: spr.length >= 10 ? median(spr) : NaN, band: band.length >= 10 ? median(band) : NaN,
+      tilt: tilt.length >= 10 ? median(tilt) : NaN, hnr: hnr.length >= 10 ? median(hnr) : NaN,
+      ringSkipped: ringSkipped, frames: fs.length };
+  }
+
+  function judgeOne(v, cr) {
+    if (!isFinite(v)) return { state: "na", side: null, score: 0 };
+    var g = cr.g, a = cr.a, lo = g[0], hi = g[1];
+    if ((lo === null || v >= lo) && (hi === null || v <= hi)) return { state: "good", side: null, score: 0 };
+    var side = (lo !== null && v < lo) ? "low" : "high", gb = side === "low" ? lo : hi, ab = side === "low" ? a[0] : a[1];
+    var inA = (a[0] === null || v >= a[0]) && (a[1] === null || v <= a[1]);
+    var margin = ab === null ? Math.max(1, Math.abs(gb) * 0.5) : Math.max(1e-6, Math.abs(ab - gb));
+    var score = Math.abs(v - gb) / margin;
+    return { state: inA ? "warn" : "bad", side: side, score: inA ? Math.min(score, 0.999) : Math.max(score, 1) };
+  }
+
+  function rangeText(r, unit) {
+    var lo = r[0], hi = r[1], u = unit === "±セント" ? "セント" : unit;
+    if (lo === null && hi === null) return "制限なし";
+    if (lo === null) return ni(hi) + " " + u + "以下";
+    if (hi === null) return ni(lo) + " " + u + "以上";
+    return ni(lo) + "〜" + ni(hi) + " " + u;
+  }
+  function fmtVal(key, v) {
+    if (!isFinite(v)) return "—";
+    switch (key) {
+      case "devAbs": case "stab": return Math.round(v) + " セント";
+      case "vibRate": return nf(v, 1) + " Hz";
+      case "vibExt": return "±" + Math.round(v) + " セント";
+      case "tilt": return nf(v, 1) + " dB/oct";
+      default: return nf(v, 1) + " dB";
+    }
+  }
+  function sc(v) { var r = Math.round(v); return (r < 0 ? "−" : "+") + Math.abs(r); }
+
+  /* ---- the report ---- */
+  function analyse(s, criteria) {
+    var mode = s.mode, crit = criteria[mode], st = stats(s), off = 1200 * Math.log(s.a4 / 440) / Math.LN2;
+    var items = CRIT.map(function (c) {
+      var v = st[c.key], j = judgeOne(v, crit[c.key]), why = "";
+      if ((c.key === "vibRate" || c.key === "vibExt") && !st.vibN) { j = { state: "na", side: null, score: 0 }; why = st.longN ? "1秒以上の音でビブラートは検出されませんでした" : "1秒以上伸ばした音がありません"; }
+      if ((c.key === "spr" || c.key === "band") && !isFinite(v) && st.ringSkipped) why = "ソプラノのC5より高い音は、この指標で判定しません";
+      if (!isFinite(v) && !why) why = "測れる声が足りません";
+      return { c: c, v: v, j: j, basis: basisOf(c, mode), cr: crit[c.key], why: why };
+    });
+    function item(key) { for (var i = 0; i < items.length; i++) if (items[i].c.key === key) return items[i]; }
+
+    /* Worst notes for concrete advice. */
+    var withDev = s.notes.map(function (n) { var r = n.c - off, d = r - Math.round(r / 100) * 100; return { n: n, d: d, name: (function () { var m = Math.round(r / 100); return ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); })() }; });
+    function worst(sign) {
+      var best = null;
+      withDev.forEach(function (x) { var key = sign ? sign * x.d : Math.abs(x.d); if (!best || key > best.key) best = { key: key, x: x }; });
+      return best ? best.x.name + "（" + fmtTime(best.x.n.t) + "、" + sc(best.x.d) + "セント）" : "";
+    }
+
+    /* Register and halves (7.1-5). */
+    var trends = { ranges: null, halves: null };
+    if (s.notes.length >= 6) {
+      var cs = s.notes.map(function (n) { return n.c; }).sort(function (p, q) { return p - q; });
+      var b1 = cs[Math.floor(cs.length / 3)], b2 = cs[Math.floor(cs.length * 2 / 3)];
+      var bands = [["低い音域", -Infinity, b1], ["中音域", b1, b2], ["高い音域", b2, Infinity]];
+      trends.ranges = bands.map(function (b) {
+        var inB = function (c) { return c >= b[1] && c < b[2]; };
+        var t = stats(s, function (n) { return inB(n.c); }, function (f) { return inB(s.notes[f[2]].c); });
+        return { label: b[0], lo: isFinite(b[1]) ? b[1] : cs[0], hi: isFinite(b[2]) ? b[2] : cs[cs.length - 1], st: t };
+      });
+      var tMid = (s.notes[0].t + s.notes[s.notes.length - 1].t + s.notes[s.notes.length - 1].dur) / 2;
+      var h1 = stats(s, function (n) { return n.t < tMid; }, function (f) { return f[0] < tMid; });
+      var h2 = stats(s, function (n) { return n.t >= tMid; }, function (f) { return f[0] >= tMid; });
+      if (h1.n >= 3 && h2.n >= 3) trends.halves = [{ label: "前半", st: h1 }, { label: "後半", st: h2 }];
+    }
+
+    /* Problems → advice (7.2). */
+    var probs = [];
+    function add(id, score, state, feature, cause, practice, basis) { probs.push({ id: id, score: score, state: state, feature: feature, cause: cause, practice: practice, basis: basis }); }
+    var it, v;
+    it = item("devAbs");
+    if (it.j.state === "warn" || it.j.state === "bad") {
+      var hiRange = trends.ranges && trends.ranges[2].st.devAbs - Math.max(trends.ranges[0].st.devAbs, trends.ranges[1].st.devAbs) >= 10;
+      if (st.devSigned <= -0.6 * st.devAbs) add("pitchLow", it.j.score, it.j.state, "音程が全体に低い（平均 " + sc(st.devSigned) + " セント）", "息の支えの不足、響きの位置が低いこと",
+        "分析タブの「基準音」で同じ音を鳴らしながら、最も低めだった " + worst(-1) + " を8拍のロングトーンで5回歌います。録音して読み込み、その音の「ずれ」が±15セント以内に入るかを見ます。", it.basis);
+      else if (st.devSigned >= 0.6 * st.devAbs) add("pitchHigh", it.j.score, it.j.state, "音程が全体に高い（平均 " + sc(st.devSigned) + " セント）", "力み、息の圧力のかけすぎ",
+        "音量を一段落として、最も高めだった " + worst(1) + " を含むフレーズを3回歌います。録音して、ずれの平均が今回の " + Math.round(st.devAbs) + " セントより小さくなるかを見ます。", it.basis);
+      else if (hiRange) add("pitchHighRange", it.j.score, it.j.state, "高い音域だけ音程がずれる（高い音域で平均 " + Math.round(trends.ranges[2].st.devAbs) + " セント、ほかは " + Math.round(Math.max(trends.ranges[0].st.devAbs, trends.ranges[1].st.devAbs)) + " セント以下）", "音域の切り替えが不安定なこと",
+        PITCH.nameOf(Math.round((trends.ranges[1].lo - off) / 100) * 100) + " から半音ずつ上がる音階を、1音2拍のゆっくりした速さで歌って録音します。「音ごとの結果」で、ずれが15セントを超え始める音を探します。", it.basis);
+      else add("pitchScatter", it.j.score, it.j.state, "音ごとに高め・低めがばらつく（平均 " + Math.round(st.devAbs) + " セント）", "音の跳躍で目標の高さに届く前に次の音へ移っていること",
+        "ずれの最も大きかった " + worst(0) + " と、その前の音の2音だけを、ゆっくり5回つなげて歌います。「音ごとの結果」の行を押してその箇所を聴き直し、ずれが15セント以内になるかを見ます。", it.basis);
+    }
+    it = item("stab");
+    if (it.j.state === "warn" || it.j.state === "bad") add("stab", it.j.score, it.j.state, "伸ばした音がふらつく（安定性 " + Math.round(it.v) + " セント）", "息の流れが一定でないこと",
+      "楽な高さの音を、一定の音量で8拍伸ばす練習を5回します。録音して「安定性」が10セント以下になるかを見ます。", it.basis);
+    it = item("vibRate");
+    if (it.j.state === "warn" || it.j.state === "bad") {
+      if (it.j.side === "low") add("vibSlow", it.j.score, it.j.state, "ビブラートが遅い（" + nf(it.v, 1) + " Hz）", "息の支えの弱さ、喉の過度な緩み",
+        "4拍ほどの短いフレーズを、息の流れを途切れさせずに歌う練習を5回します。ビブラートの速さが5Hzに近づくかを見ます。続く場合は指導者に相談してください。", it.basis);
+      else add("vibFast", it.j.score, it.j.state, "ビブラートが速い（" + nf(it.v, 1) + " Hz）", "喉まわりの緊張",
+        "リップロールかハミングを30秒してから同じ音を伸ばし、ビブラートの速さが7Hz以下になるかを見ます。", it.basis);
+    }
+    it = item("vibExt");
+    if (it.j.state === "warn" || it.j.state === "bad") {
+      if (it.j.side === "high" && mode === "choir") add("vibDeepChoir", it.j.score, it.j.state, "ビブラートが深すぎる（±" + Math.round(it.v) + " セント）", "ソロの歌い方のまま歌っていること",
+        "音量を一段下げ、同じ音をまっすぐ伸ばした場合と比べて録音します。ビブラートの深さが±50セント以下になるかを見ます。", it.basis);
+      else if (it.j.side === "high") add("vibDeep", it.j.score, it.j.state, "ビブラートが深い（±" + Math.round(it.v) + " セント）", "息の圧力の変動、喉まわりの緊張",
+        "音量を一段下げて同じ音を伸ばし、深さが±100セント以下に収まるかを見ます。揺れが大きく音程がぼやける場合は指導者に相談してください。", it.basis);
+      else add("vibShallow", it.j.score, it.j.state, "ビブラートが浅い（±" + Math.round(it.v) + " セント）", "息の流れが弱いこと、喉や顎の固さ",
+        "無理に揺らさず、息の流れを保ったロングトーンを5回します。深さが自然に±40セント前後になるかを見ます。", it.basis);
+    }
+    ["spr", "band", "tilt"].forEach(function (key) {
+      var x = item(key);
+      if (x.j.state !== "warn" && x.j.state !== "bad") return;
+      var bandTxt = isFinite(st.band) ? "今回の " + nf(st.band, 1) + " dB" : "今回の値";
+      if (x.j.side === "low") add("ringWeak", x.j.score, x.j.state, "高い倍音が弱い（こもる）", "声門の閉じが弱いこと、口の奥が狭いこと",
+        "ストローをくわえて発声する練習（1分を3回）と、「ng」のハミングから母音に開く練習（5回）をします。その後同じフレーズを録音し、「響き（帯域比）」が" + bandTxt + "より上がるかを見ます。", x.basis);
+      else if (key === "tilt") add("hard", x.j.score, x.j.state, "声が硬い（倍音の傾きが " + nf(x.v, 1) + " dB/oct と緩やか）", "喉を締めて声を出していること（詰め寄りの発声）",
+        "あくびの形で喉を開け、ストロー発声を1分×3回してから同じフレーズを録音します。「倍音の傾き」が今回よりマイナス側に動くかを見ます。", x.basis);
+      else add("ringStrong", x.j.score, x.j.state, "高い倍音が強すぎる（周囲から突出しやすい）", "声が周囲から突出していること",
+        "音量を一段下げ、基音寄りの柔らかい声で同じフレーズを録音します。「響き（帯域比）」が" + bandTxt + "より下がるかを見ます。", x.basis);
+    });
+    it = item("hnr");
+    if (it.j.state === "warn" || it.j.state === "bad") add("noisy", it.j.score, it.j.state, "雑音が多い（HNR " + nf(it.v, 1) + " dB）", "息漏れ、声の疲れ、または録音の雑音",
+      "まず静かな場所で、口から約30cmの距離で録り直します。それでも低い場合は、短く切る発声（スタッカート）で声の立ち上がりをはっきりさせる練習を5回します。声の疲れを感じたら休みます。", it.basis);
+    if (trends.halves) {
+      var A = trends.halves[0].st, B = trends.halves[1].st, worse = [];
+      if (B.devAbs - A.devAbs >= 10) worse.push("音程のずれ " + Math.round(A.devAbs) + "→" + Math.round(B.devAbs) + " セント");
+      if (isFinite(A.hnr) && isFinite(B.hnr) && A.hnr - B.hnr >= 3) worse.push("HNR " + nf(A.hnr, 1) + "→" + nf(B.hnr, 1) + " dB");
+      if (isFinite(A.band) && isFinite(B.band) && A.band - B.band >= 3) worse.push("響き " + nf(A.band, 1) + "→" + nf(B.band, 1) + " dB");
+      if (worse.length) add("fatigue", 0.5, "warn", "曲の後半で指標が落ちる（" + worse.join("、") + "）", "疲労、息の配分",
+        "フレーズごとの息継ぎの位置を楽譜に書き込み、後半だけをもう一度録音して、前半との差が縮まるかを見ます。", "仮");
+    }
+    var seen = {}, problems = [];
+    probs.sort(function (p, q) { return (q.state === "bad") - (p.state === "bad") || q.score - p.score; });
+    probs.forEach(function (p) { var key = p.id; if (!seen[key]) { seen[key] = 1; problems.push(p); } });
+    var shown = problems.slice(0, 3);
+
+    /* Reliability = the recording-condition check. */
+    var conds = conditions(s), rel = conds.items.map(function (x) { return [x.state, x.label + "：" + x.text]; }), relLevel = conds.level;
+
+    /* Summary (3 lines). */
+    var lines = [];
+    lines.push("伸ばした音 " + st.n + " 個（うち1秒以上 " + st.longN + " 個）を分析しました。音程のずれは平均 " + (isFinite(st.devAbs) ? Math.round(st.devAbs) : "—") + " セント" +
+      (isFinite(st.devSigned) && Math.abs(st.devSigned) >= 5 ? "で、全体として" + (st.devSigned < 0 ? "低め" : "高め") + "（" + sc(st.devSigned) + "）" : "") + "でした。");
+    lines.push(st.vibN ? "ビブラートは " + st.vibN + " 音で検出され、速さ " + st.vibRate.toFixed(1) + " Hz、深さ ±" + Math.round(st.vibExt) + " セントでした。" : "ビブラートは検出されませんでした。");
+    lines.push("響き（2.5〜3.5kHz）は " + (isFinite(st.band) ? nf(st.band, 1) + " dB" : "—") + "、澄み具合（HNR）は " + (isFinite(st.hnr) ? nf(st.hnr, 1) + " dB" : "—") + " でした。");
+    var counts = { good: 0, warn: 0, bad: 0 };
+    items.forEach(function (x) { if (counts[x.j.state] !== undefined) counts[x.j.state]++; });
+
+    return { s: s, st: st, items: items, problems: shown, moreProblems: problems.length - shown.length, rel: rel, relLevel: relLevel, lines: lines, counts: counts, trends: trends };
+  }
+  function fmtTime(t) { var m = Math.floor(t / 60), r = t - m * 60; return m + ":" + ("0" + r.toFixed(1)).slice(-4); }
+
+  /* ---- recording-condition check (企画書 9章). Works on records saved before this check existed: missing fields are skipped. ---- */
+  function conditions(s) {
+    var R = s.rel || {}, items = [], has = function (v) { return v !== null && v !== undefined && isFinite(v); };
+    var leadHint = has(R.lead) && R.lead >= 1 ? "" : "録音の最初に3秒ほど黙っておくと、より確実に測れます。";
+    if (has(R.floor) && has(R.voiced)) {
+      var snr = R.voiced - R.floor, txt = snr >= 60 ? "60 dB以上" : Math.round(snr) + " dB";
+      if (snr >= 20) items.push({ state: "good", label: "周囲の雑音", text: "声と無音部分の差は " + txt + " で、雑音は十分小さいと考えられます。" });
+      else if (snr >= 10) items.push({ state: "warn", label: "周囲の雑音", text: "声と無音部分の差が " + txt + " です。雑音が響きや澄み具合の値を下げている可能性があります。静かな部屋で録り直すと確実です。" + leadHint });
+      else items.push({ state: "bad", label: "周囲の雑音", text: "声と無音部分の差が " + txt + " しかありません。響きと澄み具合の値は信頼できません。静かな部屋で録り直してください。" + leadHint });
+    } else items.push({ state: "na", label: "周囲の雑音", text: "無音の部分がないため測れませんでした。" + (leadHint || "") });
+    if (has(R.clip)) {
+      if (R.clip > 1e-4) items.push({ state: "bad", label: "音割れ", text: "音割れした部分があります（" + (R.clip * 100).toFixed(2) + "%）。響きの値が実際より高く出ます。マイクから少し離れて録り直してください。" });
+      else if (R.clip > 0) items.push({ state: "warn", label: "音割れ", text: "ごくわずかに音割れがあります（" + (R.clip * 100).toFixed(3) + "%）。大きな声の部分で、マイクから少し離れると安心です。" });
+      else items.push({ state: "good", label: "音割れ", text: "見つかりませんでした。" });
+    }
+    if (has(R.voiced)) {
+      if (R.voiced < -40) items.push({ state: "warn", label: "録音の大きさ", text: "声が小さく録れています（" + nf(R.voiced, 0) + " dBFS）。雑音の影響を受けやすいので、マイクに少し近づいてください。" });
+      else items.push({ state: "good", label: "録音の大きさ", text: "十分な大きさで録れています（" + nf(R.voiced, 0) + " dBFS）。" });
+    }
+    if (has(R.kbps)) {
+      if (R.kbps < 96) items.push({ state: "warn", label: "音質（圧縮）", text: "強く圧縮された音声です（約 " + R.kbps + " kbps）。高い周波数が削られ、響きの値が低めに出ることがあります。ボイスメモの音質を「ロスレス」にすると確実です。" });
+      else items.push({ state: "good", label: "音質（圧縮）", text: (R.kbps >= 500 ? "ほぼ劣化のない音質です" : "分析に十分な音質です") + "（約 " + R.kbps + " kbps）。" });
+    }
+    if (has(R.voicedSec)) {
+      if (R.voicedSec >= 3 && s.notes.length >= 3) items.push({ state: "good", label: "声の量", text: "分析できた声は " + s.notes.length + " 音、合計 " + R.voicedSec.toFixed(1) + " 秒です。" });
+      else items.push({ state: "warn", label: "声の量", text: "分析できた声が " + s.notes.length + " 音、合計 " + R.voicedSec.toFixed(1) + " 秒と少ないため、結果は目安です。0.25秒以上伸ばす音を含めて録ってください。" });
+    }
+    items.push({ state: "na", label: "比べるときの注意", text: "マイクと部屋の響きで響きの値は変わります。同じ場所・同じ距離（口から約30cm）で録った記録どうしで比べてください。" });
+    var level = items.some(function (x) { return x.state === "bad"; }) ? "低い" : items.some(function (x) { return x.state === "warn"; }) ? "ふつう" : "高い";
+    return { items: items, level: level };
+  }
+
+  /* ---- comparing two records. Both are judged with the newer record's mode, so the verdicts line up. ---- */
+  var EPS = { devAbs: 2, stab: 1, vibRate: 0.1, vibExt: 3, spr: 1, band: 1, tilt: 0.5, hnr: 1 };
+  function distOut(v, g) { if (!isFinite(v)) return NaN; if (g[0] !== null && v < g[0]) return g[0] - v; if (g[1] !== null && v > g[1]) return v - g[1]; return 0; }
+  function compare(a, b, criteria) {
+    var mode = b.mode, A = analyse(Object.assign({}, a, { mode: mode }), criteria), B = analyse(b, criteria);
+    var rows = CRIT.map(function (c, i) {
+      var ia = A.items[i], ib = B.items[i], va = ia.j.state === "na" ? NaN : ia.v, vb = ib.j.state === "na" ? NaN : ib.v, g = criteria[mode][c.key].g, verdict;
+      if (!isFinite(va) || !isFinite(vb)) verdict = "na";
+      else {
+        var da = distOut(va, g), db = distOut(vb, g);
+        if (da === 0 && db === 0) verdict = "keep";
+        else if (db < da - EPS[c.key]) verdict = "better";
+        else if (db > da + EPS[c.key]) verdict = "worse";
+        else verdict = "same";
+      }
+      return { c: c, a: ia, b: ib, va: va, vb: vb, diff: vb - va, verdict: verdict, cr: criteria[mode][c.key] };
+    });
+    var n = { better: 0, worse: 0, same: 0, keep: 0, na: 0 };
+    rows.forEach(function (r) { n[r.verdict]++; });
+    return { mode: mode, A: A, B: B, rows: rows, n: n, modeDiffers: a.mode !== b.mode, condA: conditions(a).level, condB: conditions(b).level };
+  }
+  return { nf: nf, ni: ni, CRIT: CRIT, defaults: defaults, build: build, analyse: analyse, conditions: conditions, compare: compare, rangeText: rangeText, fmtVal: fmtVal, basisOf: basisOf, fmtTime: fmtTime, median: median };
+})();
+/*REPORT-END*/
+
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = text; return e; }
+  var N = DSP.N, FMAX = 5000, F0_MIN = 60, F0_MAX = 1400, TRACE_WIN = 8;
+  var ctx = null, analyser = null, outGain = null, node = null, worker = null, workerURL = null, jobId = 0;
+  var S = { kind: "tone", tone: "vib220", source: "", pcm: null, buffer: null, dur: 6, playing: false, offset: 0, startedAt: 0, token: 0,
+    view: "spec", resumeAfterSeek: false, a4: 440, mode: "solo", voice: "T", track: null, prog: 0, failed: false, center: 5700, curNote: -2,
+    session: null, savedId: null, shown: null, reportSeen: true, cmp: [], fileInfo: null, tab: "analyze", critMode: "solo" };
+  var tbuf = new Float32Array(N), spec = new Float32Array(N / 2), cur = null, lastFrame = 0, lastVer = 0;
+
+  /* ---------- per-viewer storage ---------- */
+  function load(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
+  function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch (e) { return false; } }
+  var prefs = load("voice-prefs", {});
+  if (prefs.a4 >= 400 && prefs.a4 <= 460) S.a4 = prefs.a4;
+  if (prefs.mode === "choir" || prefs.mode === "solo") S.mode = prefs.mode;
+  if (["S", "A", "T", "B"].indexOf(prefs.voice) >= 0) S.voice = prefs.voice;
+  function savePrefs() { store("voice-prefs", { a4: S.a4, mode: S.mode, voice: S.voice }); }
+  var criteria = (function () {
+    var saved = load("voice-criteria", {}), out = {};
+    ["solo", "choir"].forEach(function (m) {
+      out[m] = REPORT.defaults(m);
+      if (saved && saved[m]) Object.keys(out[m]).forEach(function (k) { var c = saved[m][k]; if (c && c.g && c.a) out[m][k] = c; });
+    });
+    return out;
+  })();
+  function sessions() { var a = load("voice-sessions", []); return Array.isArray(a) ? a : []; }
+
+  $("selA4").value = String(S.a4); if ($("selA4").value !== String(S.a4)) { S.a4 = 440; $("selA4").value = "440"; }
+  $("selVoice").value = S.voice;
+
+  /* ---------- audio ---------- */
+  function getCtx() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) throw new Error("この画面には音声処理の機能がありません");
+      ctx = new AC();
+      analyser = ctx.createAnalyser(); analyser.fftSize = N;
+      outGain = ctx.createGain(); outGain.gain.value = $("chkSound").checked ? 1 : 0;
+      analyser.connect(outGain); outGain.connect(ctx.destination);
+    }
+    return ctx;
+  }
+  function resume(c) { try { var p = c.resume(); return p && p.then ? p.catch(function () {}) : Promise.resolve(); } catch (e) { return Promise.resolve(); } }
+  function decode(c, ab) { return new Promise(function (ok, ng) { var p = c.decodeAudioData(ab, ok, ng); if (p && p.then) p.then(ok, ng); }); }
+  function readBuffer(file) {
+    if (file.arrayBuffer) return file.arrayBuffer();
+    return new Promise(function (ok, ng) { var fr = new FileReader(); fr.onload = function () { ok(fr.result); }; fr.onerror = function () { ng(fr.error); }; fr.readAsArrayBuffer(file); });
+  }
+  function position() { return S.playing ? Math.min(S.dur, ctx.currentTime - S.startedAt) : S.offset; }
+
+  async function play() {
+    if (S.playing || !S.pcm) return;
+    var c;
+    try { c = getCtx(); } catch (e) { note(e.message, true); return; }
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    await resume(c);
+    if (!S.buffer) { S.buffer = c.createBuffer(1, S.pcm.data.length, S.pcm.sr); S.buffer.getChannelData(0).set(S.pcm.data); }
+    if (S.offset >= S.dur - 0.05) S.offset = 0;
+    var src = c.createBufferSource(), tok = ++S.token;
+    src.buffer = S.buffer; src.connect(analyser);
+    src.onended = function () { if (S.token !== tok) return; S.playing = false; S.offset = S.dur; node = null; syncTransport(); render(false); };
+    src.start(0, S.offset);
+    node = src; S.startedAt = c.currentTime - S.offset; S.playing = true;
+    syncTransport();
+  }
+  function pause() {
+    if (!S.playing) return;
+    S.offset = position(); S.token++; S.playing = false;
+    try { node.stop(); node.disconnect(); } catch (e) {}
+    node = null; syncTransport();
+  }
+
+  /* ---------- whole-file analysis ---------- */
+  function workerText() { return $("dspCode").textContent + "\n" + $("trackSrc").textContent; }
+  function onTrack(d) {
+    if (d.job !== jobId) return;
+    if (d.type === "progress") { S.prog = d.p; traceNote(); readouts(); return; }
+    S.track = PITCH.prepare(d);
+    S.curNote = -2;
+    var first = null, i;
+    for (i = 0; i < S.track.n && first === null; i++) if (!isNaN(S.track.s1[i])) first = S.track.s1[i];
+    if (first !== null) S.center = Math.round((first - PITCH.a4off(S.a4)) / 100) * 100;
+    makeSession(); syncDrone();
+    traceNote(); buildNotes(); render(false);
+  }
+  function runInPage(job, pcm) {
+    var fake = { postMessage: function (data) { onTrack(data); }, isStale: function () { return job !== jobId; } };
+    try { new Function("self", workerText())(fake); fake.onmessage({ data: { job: job, x: pcm.data, sr: pcm.sr } }); }
+    catch (e) { S.failed = true; traceNote(); buildNotes(); }
+  }
+  function startTrack() {
+    var job = ++jobId, pcm = S.pcm;
+    S.track = null; S.session = null; S.savedId = null; S.prog = 0; S.failed = false; S.curNote = -2;
+    traceNote(); buildNotes(); updateReportAvailability(); renderConditions(); syncDrone();
+    if (worker) { worker.terminate(); worker = null; }
+    if (!pcm) return;
+    try {
+      if (!workerURL) workerURL = URL.createObjectURL(new Blob([workerText()], { type: "text/javascript" }));
+      var w = new Worker(workerURL), copy = pcm.data.slice();
+      worker = w;
+      w.onmessage = function (ev) { onTrack(ev.data); };
+      w.onerror = function (ev) { if (ev && ev.preventDefault) ev.preventDefault(); if (worker === w) { w.terminate(); worker = null; runInPage(job, pcm); } };
+      w.postMessage({ job: job, x: copy, sr: pcm.sr }, [copy.buffer]);
+    } catch (e) { worker = null; setTimeout(function () { runInPage(job, pcm); }, 0); }
+  }
+  function frameAt(t) { var tr = S.track; return tr ? Math.max(0, Math.min(tr.n - 1, Math.round((t - tr.t0) / tr.hop))) : -1; }
+  function timeOf(i) { return S.track.t0 + i * S.track.hop; }
+  function noteAt(i) {
+    var ns = S.track ? S.track.notes : [], lo = 0, hi = ns.length - 1, m;
+    while (lo <= hi) { m = (lo + hi) >> 1; if (ns[m].b < i) lo = m + 1; else if (ns[m].a > i) hi = m - 1; else return m; }
+    return -1;
+  }
+  function makeSession() {
+    if (!S.track) return;
+    S.session = REPORT.build(S.track, { mode: S.mode, voice: S.voice, a4: S.a4, title: $("memo").value.trim(), source: S.source, kind: S.kind, dur: S.dur,
+      kbps: S.fileInfo ? S.fileInfo.kbps : null, ext: S.fileInfo ? S.fileInfo.ext : null });
+    S.savedId = null; S.reportSeen = false;
+    if (!S.shown || S.shown === "current") showReport("current");
+    updateReportAvailability(); renderConditions();
+  }
+
+  /* ---------- recording-condition check ---------- */
+  var COND_STATE = { good: "問題なし", warn: "注意", bad: "問題あり", na: "参考" };
+  function renderConditions() {
+    var list = $("condList"), lvl = $("condLevel"); list.textContent = "";
+    if (!S.session) {
+      lvl.className = "state na"; lvl.textContent = S.pcm && !S.failed ? "確認中" : "未実施";
+      list.appendChild(el("p", "note", S.pcm ? "解析が終わると、雑音・音割れ・録音の大きさ・音質・声の量を確かめます。" : "ファイルを選ぶと、雑音・音割れ・録音の大きさ・音質・声の量を確かめます。"));
+      return;
+    }
+    var C = REPORT.conditions(S.session);
+    lvl.className = "state " + (C.level === "高い" ? "good" : C.level === "ふつう" ? "warn" : "bad");
+    lvl.textContent = "信頼度 " + C.level;
+    C.items.forEach(function (x) {
+      var row = el("div", "cond"); row.appendChild(el("span", "state " + x.state, COND_STATE[x.state]));
+      row.appendChild(el("b", null, x.label)); row.appendChild(el("span", "txt", x.text)); list.appendChild(row);
+    });
+    if (S.kind === "tone") list.appendChild(el("p", "note", "いまはテスト音です。音質の項目は、ファイルを読み込んだときだけ表示されます。"));
+  }
+  function refreshSessionOpts() {
+    if (!S.session) return;
+    S.session.mode = S.mode; S.session.voice = S.voice; S.session.a4 = S.a4; S.session.title = $("memo").value.trim();
+    if (S.savedId) persistCurrent();
+    if (S.shown === "current") renderReport();
+  }
+
+  /* ---------- spectrum ---------- */
+  function analyse(x, sr) {
+    DSP.spectrum(x, spec);
+    var level = DSP.rms(x), levelDb = level > 0 ? 20 * Math.log10(level) : -Infinity;
+    var voiced = levelDb > -60 ? DSP.yin(x, sr, F0_MIN, F0_MAX) : null;
+    cur = { sr: sr, levelDb: levelDb, f0: voiced ? voiced.f : null,
+      peak: levelDb > -60 ? DSP.globalPeak(spec, sr, 50, FMAX) : null,
+      harm: voiced ? DSP.harmonics(spec, voiced.f, sr, 20) : [] };
+  }
+  function analyseAt(sec) {
+    if (!S.pcm) { cur = null; render(false); return; }
+    var sr = S.pcm.sr, d = S.pcm.data, x = new Float32Array(N);
+    var start = Math.max(0, Math.min(d.length - N, Math.round(sec * sr) - N));
+    for (var k = 0; k < N && start + k < d.length; k++) x[k] = d[start + k];
+    analyse(x, sr); render(false);
+  }
+
+  /* ---------- drawing ---------- */
+  var tok = null, tokAt = 0;
+  function T() {
+    var now = performance.now();
+    if (!tok || now - tokAt > 1000) {
+      var s = getComputedStyle(document.documentElement), g = function (n) { return s.getPropertyValue(n).trim(); };
+      tok = { bg: g("--surface"), ink: g("--ink"), muted: g("--muted"), line: g("--line"), accent: g("--accent"), mark: g("--mark"), band: g("--band") };
+      tok.key = tok.bg + tok.accent; tokAt = now;
+    }
+    return tok;
+  }
+  function prep(cv) {
+    var dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return null;
+    var W = Math.round(w * dpr), H = Math.round(h * dpr), resized = false;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; resized = true; }
+    var g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g: g, w: w, h: h, W: W, H: H, dpr: dpr, resized: resized };
+  }
+  var DATA_FONT = "10px ui-monospace, Menlo, monospace";
+  function hint(g, t, x, y, text) { g.fillStyle = t.muted; g.font = "13px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, x, y); }
+  function fmtC(v) { var r = Math.round(v); return (r < 0 ? "−" : "+") + Math.abs(r); }
+
+  function drawTrace() {
+    if (rec) { drawLiveTrace(); return; }
+    var p = prep($("trace")); if (!p) return;
+    var g = p.g, t = T(), w = p.w, padL = 32, padR = 6, padB = 16, ph = p.h - padB, pw = w - padL - padR;
+    var pos = position(), tEnd = Math.max(TRACE_WIN, pos), tStart = tEnd - TRACE_WIN, tr = S.track, off = PITCH.a4off(S.a4), k, i;
+    g.clearRect(0, 0, w, p.h);
+    if (tr) {
+      var i0 = frameAt(tStart), i1 = frameAt(pos), vals = [];
+      for (i = i0; i <= i1; i++) if (!isNaN(tr.s1[i])) vals.push(tr.s1[i] - off);
+      if (vals.length > 5) {
+        vals.sort(function (a, b) { return a - b; });
+        var tgt = Math.round(vals[vals.length >> 1] / 100) * 100;
+        if (Math.abs(tgt - S.center) >= 300) S.center = tgt;
+      }
+    }
+    var lo = S.center - 650, hi = S.center + 650;
+    var X = function (s) { return padL + (s - tStart) / TRACE_WIN * pw; };
+    var Y = function (c) { return ph - (c - lo) / (hi - lo) * ph; };
+    g.lineWidth = 1; g.font = DATA_FONT; g.textAlign = "right"; g.textBaseline = "middle";
+    for (k = Math.ceil(lo / 100); k <= Math.floor(hi / 100); k++) {
+      var y = Math.round(Y(k * 100)) + 0.5, pc = ((k % 12) + 12) % 12, natural = [0, 2, 4, 5, 7, 9, 11].indexOf(pc) >= 0;
+      g.strokeStyle = t.line; g.globalAlpha = natural ? 1 : 0.45;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(w - padR, y); g.stroke();
+      g.globalAlpha = 1;
+      if (natural) { g.fillStyle = pc === 0 ? t.ink : t.muted; g.fillText(PITCH.nameOf(k * 100), padL - 4, y); }
+    }
+    g.textAlign = "center"; g.textBaseline = "top"; g.fillStyle = t.muted;
+    for (k = Math.ceil(tStart / 2) * 2; k <= tEnd + 1e-6; k += 2) {
+      var xs = X(k); if (xs < padL + 10 || xs > w - padR - 10) continue;
+      g.fillText(Math.floor(k / 60) + ":" + ("0" + (k % 60)).slice(-2), xs, ph + 3);
+    }
+    g.strokeStyle = t.line; g.beginPath(); g.moveTo(padL, ph + 0.5); g.lineTo(w - padR, ph + 0.5); g.stroke();
+    if (!tr) { hint(g, t, padL + pw / 2, ph / 2, S.failed ? "解析できませんでした" : S.pcm ? "解析しています…" : "ファイルを選ぶと表示されます"); return; }
+    g.save(); g.beginPath(); g.rect(padL, 0, pw, ph); g.clip();
+    var i0b = frameAt(tStart), i1b = frameAt(pos);
+    tr.notes.forEach(function (nt) {
+      if (nt.b < i0b || nt.a > i1b) return;
+      var r = PITCH.rel(nt.meanC, S.a4), y = Y(r.tgt - off), xa = X(timeOf(nt.a)), xb = X(Math.min(timeOf(nt.b), pos));
+      g.strokeStyle = t.mark; g.lineWidth = 3; g.globalAlpha = 0.55;
+      g.beginPath(); g.moveTo(xa, y); g.lineTo(xb, y); g.stroke(); g.globalAlpha = 1;
+      if (timeOf(nt.b) <= pos) { g.fillStyle = t.mark; g.font = "600 " + DATA_FONT; g.textAlign = "right"; g.textBaseline = "bottom"; g.fillText(fmtC(r.dev), xb, y - 4); }
+    });
+    g.strokeStyle = t.accent; g.lineWidth = 1.6; g.lineJoin = "round"; g.beginPath();
+    var pen = false;
+    for (i = i0b; i <= i1b; i++) {
+      var v = tr.c[i];
+      if (isNaN(v)) { pen = false; continue; }
+      var xx = X(timeOf(i)), yy = Y(v - off);
+      if (pen) g.lineTo(xx, yy); else { g.moveTo(xx, yy); pen = true; }
+    }
+    g.stroke();
+    g.restore();
+    var xp = Math.round(X(pos)) + 0.5;
+    g.strokeStyle = t.muted; g.lineWidth = 1; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(xp, 0); g.lineTo(xp, ph); g.stroke(); g.setLineDash([]);
+  }
+
+  function drawSpectrum() {
+    var p = prep($("spec")); if (!p) return;
+    var g = p.g, t = T(), w = p.w, padB = 18, ph = p.h - padB, DB_LO = -100, DB_HI = 0, k, x, y;
+    var X = function (f) { return f / FMAX * w; }, Y = function (db) { return ph - Math.max(0, Math.min(1, (db - DB_LO) / (DB_HI - DB_LO))) * ph; };
+    g.clearRect(0, 0, w, p.h);
+    g.fillStyle = t.band; g.fillRect(X(2500), 0, X(3500) - X(2500), ph);
+    g.lineWidth = 1; g.strokeStyle = t.line; g.fillStyle = t.muted; g.font = DATA_FONT; g.textBaseline = "top";
+    for (k = 0; k <= 5; k++) {
+      x = Math.min(w - 0.5, Math.max(0.5, Math.round(X(k * 1000)) + 0.5));
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, ph); g.stroke();
+      g.textAlign = k === 0 ? "left" : k === 5 ? "right" : "center";
+      g.fillText(k === 5 ? "5 kHz" : String(k), k === 0 ? 3 : k === 5 ? w - 3 : x, ph + 4);
+    }
+    g.textAlign = "right"; g.textBaseline = "bottom";
+    for (k = -20; k >= -80; k -= 20) {
+      y = Math.round(Y(k)) + 0.5;
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+      g.fillText(k + " dB", w - 3, y - 1);
+    }
+    g.beginPath(); g.moveTo(0, ph + 0.5); g.lineTo(w, ph + 0.5); g.stroke();
+    if (!cur) { hint(g, t, w / 2, ph / 2, "再生するとここに表示されます"); return; }
+    var binHz = cur.sr / N, n = Math.min(spec.length, Math.ceil(FMAX / binHz) + 1);
+    g.beginPath();
+    for (k = 0; k < n; k++) { y = Y(spec[k]); if (k === 0) g.moveTo(0, y); else g.lineTo(X(k * binHz), y); }
+    g.strokeStyle = t.accent; g.lineWidth = 1.5; g.lineJoin = "round"; g.stroke();
+    g.fillStyle = t.mark;
+    cur.harm.forEach(function (hm) { if (hm.f <= FMAX && hm.db > DB_LO) { g.beginPath(); g.arc(X(hm.f), Y(hm.db), 2.6, 0, 6.2832); g.fill(); } });
+  }
+
+  function drawHarmonics() {
+    var p = prep($("harm")); if (!p) return;
+    var g = p.g, t = T(), w = p.w, padL = 34, padB = 18, padT = 8, pw = w - padL - 4, ph = p.h - padB - padT, RANGE = 60, k, y;
+    g.clearRect(0, 0, w, p.h);
+    g.font = DATA_FONT; g.lineWidth = 1; g.strokeStyle = t.line; g.fillStyle = t.muted; g.textAlign = "right"; g.textBaseline = "middle";
+    for (k = 0; k >= -RANGE; k -= 20) {
+      y = Math.round(padT + (-k / RANGE) * ph) + 0.5;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(w - 4, y); g.stroke();
+      g.fillText(k === 0 ? "0 dB" : String(k), padL - 4, y);
+    }
+    var slot = pw / 20, bw = Math.max(3, slot * 0.62);
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (k = 1; k <= 20; k++) g.fillText(String(k), padL + (k - 0.5) * slot, padT + ph + 4);
+    if (!cur || !cur.harm.length) { hint(g, t, padL + pw / 2, padT + ph / 2, cur ? "音の高さを検出できません" : "再生するとここに表示されます"); return; }
+    var top = -Infinity; cur.harm.forEach(function (hm) { if (hm.db > top) top = hm.db; });
+    cur.harm.forEach(function (hm) {
+      var rel = Math.max(-RANGE, hm.db - top), bh = (1 + rel / RANGE) * ph;
+      g.fillStyle = (hm.f >= 2500 && hm.f <= 3500) ? t.mark : t.accent;
+      g.fillRect(padL + (hm.n - 0.5) * slot - bw / 2, padT + ph - bh, bw, Math.max(1, bh));
+    });
+  }
+
+  var ramp = null, rampKey = "";
+  function hex(c) { c = c.replace("#", ""); if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2]; return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]; }
+  function getRamp(t) {
+    if (ramp && rampKey === t.key) return ramp;
+    var a = hex(t.bg), b = hex(t.accent), c = hex(t.ink), k, u, lo, hi;
+    ramp = new Uint8Array(256 * 3);
+    for (k = 0; k < 256; k++) {
+      u = k / 255; if (u < 0.55) { lo = a; hi = b; u = u / 0.55; } else { lo = b; hi = c; u = (u - 0.55) / 0.45; }
+      ramp[k * 3] = lo[0] + (hi[0] - lo[0]) * u; ramp[k * 3 + 1] = lo[1] + (hi[1] - lo[1]) * u; ramp[k * 3 + 2] = lo[2] + (hi[2] - lo[2]) * u;
+    }
+    rampKey = t.key; return ramp;
+  }
+  function clearSg() { var p = prep($("sg")); if (!p) return; p.g.fillStyle = T().bg; p.g.fillRect(0, 0, p.w, p.h); }
+  function pushSg() {
+    var cv = $("sg"), p = prep(cv); if (!p || !cur) return;
+    var g = p.g, t = T(), r = getRamp(t), step = Math.max(2, Math.round(2 * p.dpr)), H = p.H, binHz = cur.sr / N, y, x, v, o, bin;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    if (p.resized) { g.fillStyle = t.bg; g.fillRect(0, 0, p.W, H); }
+    g.drawImage(cv, -step, 0);
+    var img = g.createImageData(step, H), d = img.data;
+    for (y = 0; y < H; y++) {
+      bin = Math.min(spec.length - 1, Math.round((1 - y / H) * FMAX / binHz));
+      v = Math.max(0, Math.min(255, Math.round((spec[bin] + 90) / 80 * 255)));
+      for (x = 0; x < step; x++) { o = (y * step + x) * 4; d[o] = r[v * 3]; d[o + 1] = r[v * 3 + 1]; d[o + 2] = r[v * 3 + 2]; d[o + 3] = 255; }
+    }
+    g.putImageData(img, p.W - step, 0);
+  }
+
+  /* ---------- readouts ---------- */
+  function setDD(id, main, sub) { var e = $(id); e.textContent = main; var s = el("small", null, sub || " "); e.appendChild(s); }
+  function fx(v, d) { return (v < 0 ? "−" : "") + Math.abs(v).toFixed(d); }
+  function readouts() {
+    var tr = S.track, ids = ["vF0", "vDev", "vVib", "vBand", "vTilt", "vHnr"];
+    if (!tr) { var msg = S.pcm && !S.failed ? "解析中 " + Math.round(S.prog * 100) + "%" : ""; ids.forEach(function (id) { setDD(id, "—", msg); }); return; }
+    var i = frameAt(position()), c = tr.c[i], ni = noteAt(i), nt = ni >= 0 ? tr.notes[ni] : null;
+    if (isNaN(c)) { setDD("vF0", "—", "声なし"); ids.slice(1).forEach(function (id) { setDD(id, "—"); }); return; }
+    var r = nt ? PITCH.rel(nt.meanC, S.a4) : PITCH.rel(c, S.a4);
+    setDD("vF0", PITCH.fromC(c).toFixed(1) + " Hz", r.name);
+    if (nt && !isNaN(tr.s1[i])) setDD("vDev", fmtC(tr.s1[i] - r.tgt) + " c", "この音の平均 " + fmtC(r.dev));
+    else setDD("vDev", "—", "伸ばした音のみ");
+    if (!nt) setDD("vVib", "—", "伸ばした音のみ");
+    else if (nt.vib === "yes") setDD("vVib", nt.rate.toFixed(1) + " Hz", "深さ ±" + Math.round(nt.extent) + " c");
+    else if (nt.vib === "none") setDD("vVib", "なし", "まっすぐな音");
+    else setDD("vVib", "—", "1秒未満の音");
+    /* Timbre values are computed every 50 ms; show the nearest. */
+    var q = Math.round(i / tr.mstep), qi = Math.min(q, tr.band.length - 1);
+    var bandV = tr.band[qi], tiltV = tr.tilt[qi], hnrV = tr.hnr[qi];
+    setDD("vBand", isFinite(bandV) ? fx(bandV, 1) + " dB" : "—", isFinite(bandV) ? "SPR " + fx(tr.spr[qi], 1) : "");
+    setDD("vTilt", isFinite(tiltV) ? fx(tiltV, 1) : "—", "dB/オクターブ");
+    setDD("vHnr", isFinite(hnrV) ? fx(hnrV, 1) + " dB" : "—", isFinite(hnrV) ? (hnrV >= 20 ? "澄んでいる" : hnrV >= 10 ? "ふつう" : "雑音が多い") : "");
+  }
+
+  /* ---------- per-note table ---------- */
+  function mmss(s, dec) {
+    s = Math.max(0, s);
+    var m = Math.floor(s / 60), r = s - m * 60;
+    return m + ":" + (dec ? ("0" + r.toFixed(1)).slice(-4) : ("0" + Math.floor(r)).slice(-2));
+  }
+  function sumItem(dl, label, value, sub) {
+    var div = el("div"), dt = el("dt", null, label), dd = el("dd", null, value);
+    if (sub) dd.appendChild(el("small", null, sub));
+    div.appendChild(dt); div.appendChild(dd); dl.appendChild(div);
+  }
+  function buildNotes() {
+    var body = $("notesBody"), dl = $("summary"), tr = S.track;
+    body.textContent = ""; dl.textContent = "";
+    if (!tr) { sumItem(dl, "状態", S.failed ? "解析できませんでした" : S.pcm ? "解析中" : "音源がありません"); return; }
+    var ns = tr.notes;
+    if (!ns.length) { sumItem(dl, "状態", "伸ばした音が見つかりません", "0.25秒以上続く声が対象"); return; }
+    var devs = [], stabs = [], rates = [], exts = [], longN = 0;
+    ns.forEach(function (nt, idx) {
+      var r = PITCH.rel(nt.meanC, S.a4);
+      devs.push(Math.abs(r.dev)); stabs.push(nt.stab);
+      if (nt.vib !== "short") longN++;
+      if (nt.vib === "yes") { rates.push(nt.rate); exts.push(nt.extent); }
+      var row = el("tr"); row.tabIndex = 0; row.dataset.idx = String(idx);
+      [[mmss(timeOf(nt.a), true), "num"], [r.name, "name"], [nt.dur.toFixed(1), "num"], [fmtC(r.dev), "num"], [nt.stab.toFixed(0), "num"],
+        [nt.vib === "yes" ? nt.rate.toFixed(1) + " Hz ±" + Math.round(nt.extent) : nt.vib === "none" ? "なし" : "—", "num"]
+      ].forEach(function (cc) { row.appendChild(el("td", cc[1], cc[0])); });
+      body.appendChild(row);
+    });
+    sumItem(dl, "音の数", String(ns.length), "1秒以上は" + longN);
+    sumItem(dl, "ずれの平均", (devs.reduce(function (p, q) { return p + q; }, 0) / devs.length).toFixed(0) + " c", "絶対値");
+    sumItem(dl, "安定性", REPORT.median(stabs).toFixed(0) + " c", "中央値");
+    if (rates.length) sumItem(dl, "ビブラート", REPORT.median(rates).toFixed(1) + " Hz ±" + Math.round(REPORT.median(exts)), rates.length + "音の中央値");
+    else sumItem(dl, "ビブラート", longN ? "なし" : "—", longN ? "1秒以上の音で検出なし" : "1秒以上の音なし");
+    S.curNote = -2;
+  }
+  function highlightNote() {
+    if (!S.track) return;
+    var ni = noteAt(frameAt(position()));
+    if (ni === S.curNote) return;
+    var rows = $("notesBody").children;
+    if (S.curNote >= 0 && rows[S.curNote]) rows[S.curNote].removeAttribute("aria-current");
+    if (ni >= 0 && rows[ni]) {
+      rows[ni].setAttribute("aria-current", "true");
+      var wrap = rows[ni].closest(".table-wrap"), top = rows[ni].offsetTop, h = rows[ni].offsetHeight;
+      if (wrap && (top < wrap.scrollTop + 30 || top + h > wrap.scrollTop + wrap.clientHeight)) wrap.scrollTop = top - 40;
+    }
+    S.curNote = ni;
+  }
+  function seekTo(sec) {
+    var was = S.playing; pause();
+    S.offset = Math.max(0, Math.min(S.dur, sec));
+    analyseAt(S.offset); syncTransport();
+    if (was) play();
+  }
+  $("notesBody").addEventListener("click", function (ev) { var row = ev.target.closest("tr"); if (row && S.track) seekTo(timeOf(S.track.notes[+row.dataset.idx].a) - 0.15); });
+  $("notesBody").addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { var row = ev.target.closest("tr"); if (row) { ev.preventDefault(); row.click(); } } });
+
+  /* ---------- verification ---------- */
+  function harmonicAnswers(f0) {
+    /* Sawtooth-like tone: harmonic h has amplitude 1/h. */
+    var H = 20, tot = 0, band = 0, h, f;
+    for (h = 1; h <= H; h++) { f = f0 * h; if (f >= 50 && f <= 5000) tot += 1 / (h * h); if (f >= 2500 && f <= 3500) band += 1 / (h * h); }
+    var hi = 0, lo = 0;
+    for (h = 1; h <= H; h++) { f = f0 * h; var db = -20 * Math.log10(h); if (f >= 2000 && f <= 4000) hi = Math.max(hi, 1 / h); if (f >= 50 && f <= 2000) lo = Math.max(lo, 1 / h); }
+    return { band: 10 * Math.log10(band / tot), spr: 20 * Math.log10(hi / lo), tilt: -20 * Math.log10(2) };
+  }
+  function verification() {
+    var sec = $("verSec"); sec.hidden = S.kind !== "tone"; if (sec.hidden) return;
+    var tone = DSP.TONES[S.tone], tr = S.track, ns = tr ? tr.notes : null, rows = [], pend = tr ? "—" : "解析中", st = S.session ? REPORT.analyse(S.session, criteria).st : null;
+    function centsBetween(f, g) { return 1200 * Math.log(f / g) / Math.LN2; }
+    function pitchRow(label, trueF, nt) {
+      var mf = nt ? PITCH.fromC(nt.meanC) : null;
+      rows.push([label, trueF.toFixed(1) + " Hz", mf ? mf.toFixed(1) + " Hz" : pend, mf ? Math.abs(centsBetween(mf, trueF)) <= 5 : null]);
+    }
+    function countRow(want) { rows.push(["検出した音の数", String(want), ns ? String(ns.length) : pend, ns ? ns.length === want : null]); }
+    function dbRow(label, want, got, tol, unit) { rows.push([label, fx(want, 1) + " " + unit, st ? (isFinite(got) ? fx(got, 1) + " " + unit : "—") : pend, st ? isFinite(got) && Math.abs(got - want) <= tol : null]); }
+    var live = cur && cur.levelDb > -60;
+    if (S.tone === "sine440" || S.tone === "harm220") {
+      pitchRow("音の高さ", tone.parts[0].f, ns && ns[0]);
+      countRow(1);
+      if (S.tone === "sine440") {
+        var pk = live && cur.peak, want = 20 * Math.log10(tone.amp);
+        rows.push(["山の周波数", "440.0 Hz", pk ? pk.f.toFixed(1) + " Hz" : "再生中に表示", pk ? Math.abs(pk.f - 440) <= 3 : null]);
+        rows.push(["山の強さ", fx(want, 1) + " dB", pk ? fx(pk.db, 1) + " dB" : "再生中に表示", pk ? Math.abs(pk.db - want) <= 1 : null]);
+      } else {
+        [2, 5, 10, 20].forEach(function (n) {
+          var wantH = -20 * Math.log10(n), hm = live && cur.harm[n - 1] && cur.harm[0] ? cur.harm[n - 1].db - cur.harm[0].db : null;
+          rows.push(["第" + n + "倍音", fx(wantH, 1) + " dB", hm === null ? "再生中に表示" : fx(hm, 1) + " dB", hm === null ? null : Math.abs(hm - wantH) <= 1]);
+        });
+        var ans = harmonicAnswers(220);
+        dbRow("SPR", ans.spr, st && st.spr, 1, "dB");
+        dbRow("響き（帯域比）", ans.band, st && st.band, 1, "dB");
+        dbRow("倍音の傾き", ans.tilt, st && st.tilt, 0.5, "dB/oct");
+        rows.push(["HNR", "30 dB以上", st ? (isFinite(st.hnr) ? fx(st.hnr, 1) + " dB" : "—") : pend, st ? st.hnr >= 30 : null]);
+      }
+    } else if (S.tone === "vib220") {
+      var nt = ns && ns[0], isV = nt && nt.vib === "yes";
+      pitchRow("平均の高さ", 220, nt);
+      rows.push(["ビブラートの速さ", "6.00 Hz", isV ? nt.rate.toFixed(2) + " Hz" : nt ? "検出なし" : pend, nt ? isV && Math.abs(nt.rate - 6) <= 0.2 : null]);
+      rows.push(["ビブラートの深さ", "±50.0 c", isV ? "±" + nt.extent.toFixed(1) + " c" : nt ? "検出なし" : pend, nt ? isV && Math.abs(nt.extent - 50) <= 5 : null]);
+      rows.push(["安定性", "0 c", nt ? nt.stab.toFixed(1) + " c" : pend, nt ? nt.stab <= 3 : null]);
+      countRow(1);
+    } else if (S.tone === "breathy") {
+      pitchRow("音の高さ", 220, ns && ns[0]);
+      dbRow("HNR", 10, st && st.hnr, 2, "dB");
+      countRow(1);
+    } else {
+      [0, 2, 4].forEach(function (pi, k) {
+        var f = tone.parts[pi].f, want2 = PITCH.rel(PITCH.toC(f), S.a4), nt2 = ns && ns[k], got = nt2 ? PITCH.rel(nt2.meanC, S.a4) : null;
+        var ok = got ? got.name === want2.name && Math.abs(got.dev - want2.dev) <= 5 : null;
+        rows.push([(k + 1) + "音目のずれ", want2.name + " " + fx(want2.dev, 1) + " c", got ? got.name + " " + fx(got.dev, 1) + " c" : pend, ok]);
+      });
+      var noVib = ns && ns.every(function (x) { return x.vib !== "yes"; });
+      rows.push(["ビブラート", "3音ともなし", ns ? (noVib ? "3音ともなし" : "誤って検出") : pend, ns ? noVib : null]);
+      countRow(3);
+    }
+    var body = $("verBody"); body.textContent = "";
+    rows.forEach(function (r) {
+      var row = el("tr");
+      [r[0], r[1], r[2]].forEach(function (v, i) { row.appendChild(el("td", i ? "num" : null, v)); });
+      var td = el("td");
+      if (r[3] !== null) td.appendChild(el("span", "verdict " + (r[3] ? "ok" : "ng"), r[3] ? "合格" : "不合格")); else td.textContent = "—";
+      row.appendChild(td); body.appendChild(row);
+    });
+    $("verNote").textContent = "合格の条件：高さとずれは5セント以内、ビブラートの速さは0.2Hz以内、深さは5セント以内、周波数は3Hz以内、強さ・SPR・帯域比は1dB以内、傾きは0.5dB/oct以内、雑音まじりのHNRは2dB以内。"
+      + (S.tone === "sine440" || S.tone === "harm220" ? "「再生中に表示」の行は、再生すると判定されます。" : "");
+  }
+
+  function render(live) {
+    if (S.tab !== "analyze") return;
+    if (rec) { drawLiveTrace(); return; }
+    readouts(); drawTrace(); drawSpectrum(); drawHarmonics();
+    if (live) pushSg();
+    var now = performance.now();
+    if (!live || now - lastVer > 250) { lastVer = now; verification(); highlightNote(); }
+  }
+
+  /* ---------- report ---------- */
+  var STATE_TEXT = { good: "良好", warn: "注意", bad: "要改善", na: "判定なし" };
+  function stateChip(state, text) { return el("span", "state " + state, text || STATE_TEXT[state]); }
+  function shownSession() {
+    if (S.shown === "current") return S.session;
+    var all = sessions();
+    for (var i = 0; i < all.length; i++) if (all[i].id === S.shown) return all[i];
+    return null;
+  }
+  function showReport(which) { S.shown = which; renderReport(); }
+  function updateReportAvailability() {
+    $("btnToReport").disabled = !S.session;
+    $("repDot").hidden = !(S.session && !S.reportSeen);
+  }
+  function bandBar(item, aVal) {
+    var c = item.c, ax = c.axis, cr = item.cr, wrap = el("div", "bandbar");
+    function pct(v) { return (Math.max(ax[0], Math.min(ax[1], v)) - ax[0]) / (ax[1] - ax[0]) * 100; }
+    function zone(r, cls) {
+      var lo = r[0] === null ? ax[0] : r[0], hi = r[1] === null ? ax[1] : r[1], z = el("i", cls);
+      z.style.left = pct(lo) + "%"; z.style.width = Math.max(0, pct(hi) - pct(lo)) + "%"; wrap.appendChild(z);
+    }
+    zone(cr.a, "z-ok"); zone(cr.g, "z-good");
+    if (aVal !== undefined && isFinite(aVal)) { var ma = el("b", "mk-a"); ma.style.left = pct(aVal) + "%"; wrap.appendChild(ma); }
+    if (isFinite(item.v)) { var b = el("b", item.v < ax[0] || item.v > ax[1] ? "out" : null); b.style.left = pct(item.v) + "%"; wrap.appendChild(b); }
+    wrap.setAttribute("aria-hidden", "true");
+    return wrap;
+  }
+  function renderReport() {
+    var root = $("reportBody"); root.textContent = "";
+    var s = shownSession();
+    if (!s) {
+      var p = el("div", "panel"); p.appendChild(el("p", "empty", S.pcm && !S.track ? "解析が終わるとレポートが表示されます。" : "分析タブで音源を選ぶと、ここにレポートが表示されます。"));
+      root.appendChild(p); return;
+    }
+    var R = REPORT.analyse(s, criteria), isCurrent = S.shown === "current", wrap = el("div", "view");
+
+    /* Header */
+    var head = el("section", "rep-head");
+    head.appendChild(el("h2", null, "考察レポート"));
+    head.appendChild(el("h3", null, s.title || s.source || "無題の記録"));
+    var d = new Date(s.date);
+    head.appendChild(el("span", "meta", d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + ("0" + d.getMinutes()).slice(-2) +
+      "　" + (s.mode === "choir" ? "合唱" : "ソロ") + "モード・" + { S: "ソプラノ", A: "アルト", T: "テノール", B: "バス" }[s.voice] + "・A=" + s.a4 + "Hz・" + mmss(s.dur || 0)));
+    var acts = el("div", "row");
+    if (isCurrent) {
+      var saveBtn = el("button", "small primary", S.savedId ? "記録済み" : "この結果を記録する");
+      saveBtn.type = "button"; saveBtn.disabled = !!S.savedId;
+      saveBtn.addEventListener("click", function () { saveCurrent(saveBtn); });
+      acts.appendChild(saveBtn);
+    } else {
+      var back = el("button", "small", "記録の一覧へ"); back.type = "button";
+      back.addEventListener("click", function () { setTab("history"); });
+      acts.appendChild(back);
+      if (S.session) { var curB = el("button", "small", "いまの分析のレポート"); curB.type = "button"; curB.addEventListener("click", function () { showReport("current"); }); acts.appendChild(curB); }
+    }
+    var exJ = el("button", "small", "JSONで書き出す"), exC = el("button", "small", "CSVで書き出す");
+    exJ.type = exC.type = "button";
+    exJ.addEventListener("click", function () { exportText(fileBase(s) + ".json", JSON.stringify(s, null, 1), $("repExport")); });
+    exC.addEventListener("click", function () { exportText(fileBase(s) + ".csv", toCSV(s), $("repExport")); });
+    acts.appendChild(exJ); acts.appendChild(exC);
+    head.appendChild(acts);
+    var exportBox = el("div"); exportBox.id = "repExport"; head.appendChild(exportBox);
+    if (isCurrent && !S.savedId) head.appendChild(el("p", "note", "記録すると「記録」タブに残り、あとで比べられます。曲名・メモは分析タブで入力できます。"));
+    wrap.appendChild(head);
+
+    /* 1. Summary */
+    var sec1 = el("section"); sec1.appendChild(el("h2", null, "1. 結果のまとめ"));
+    var p1 = el("div", "panel");
+    R.lines.forEach(function (l) { p1.appendChild(el("p", "lead", l)); });
+    var counts = el("div", "counts");
+    counts.appendChild(stateChip("good", "良好 " + R.counts.good)); counts.appendChild(stateChip("warn", "注意 " + R.counts.warn)); counts.appendChild(stateChip("bad", "要改善 " + R.counts.bad));
+    p1.appendChild(counts);
+    var ms = el("div", "metrics");
+    R.items.forEach(function (it) {
+      var m = el("div", "metric"), lab = el("div", "m-label");
+      lab.appendChild(el("span", null, it.c.label)); lab.appendChild(stateChip(it.j.state)); lab.appendChild(el("span", "tag", it.basis === "文献" ? "文献の基準" : "仮の基準"));
+      m.appendChild(lab); m.appendChild(el("div", "m-val", REPORT.fmtVal(it.c.key, it.v)));
+      m.appendChild(el("div", "m-sub", it.j.state === "na" ? it.why : "良好 " + REPORT.rangeText(it.cr.g, it.c.unit) + "／許容 " + REPORT.rangeText(it.cr.a, it.c.unit)));
+      if (it.j.state !== "na") {
+        m.appendChild(bandBar(it));
+        var ax = el("div", "axis"); ax.appendChild(el("span", null, String(REPORT.ni(it.c.axis[0])))); ax.appendChild(el("span", null, REPORT.ni(it.c.axis[1]) + " " + (it.c.unit === "±セント" ? "セント" : it.c.unit))); m.appendChild(ax);
+      }
+      ms.appendChild(m);
+    });
+    p1.appendChild(ms);
+    p1.appendChild(el("p", "note", "帯の濃い緑が良好、薄い黄色が許容の範囲、縦線が今回の値です。SPRと響きは0に近いほど高い倍音が強いことを示します（SPRは論文により符号が逆の場合があります）。"));
+    if (R.trends.ranges || R.trends.halves) {
+      var tw = el("div", "table-wrap"), tb = el("table"), th = el("thead"), hr = el("tr");
+      ["区分", "音の数", "ずれ", "安定性", "響き", "HNR"].forEach(function (x) { hr.appendChild(el("th", null, x)); });
+      th.appendChild(hr); tb.appendChild(th);
+      var tbody = el("tbody");
+      function trow(label, st) {
+        var r = el("tr");
+        [[label, null], [String(st.n), "num"], [isFinite(st.devAbs) ? Math.round(st.devAbs) + " c" : "—", "num"], [isFinite(st.stab) ? Math.round(st.stab) + " c" : "—", "num"],
+          [isFinite(st.band) ? REPORT.nf(st.band, 1) + " dB" : "—", "num"], [isFinite(st.hnr) ? REPORT.nf(st.hnr, 1) + " dB" : "—", "num"]].forEach(function (c) { r.appendChild(el("td", c[1], c[0])); });
+        tbody.appendChild(r);
+      }
+      var off = PITCH.a4off(s.a4);
+      if (R.trends.ranges) R.trends.ranges.forEach(function (g) { trow(g.label + "（" + PITCH.nameOf(Math.round((g.lo - off) / 100) * 100) + "〜" + PITCH.nameOf(Math.round((g.hi - off) / 100) * 100) + "）", g.st); });
+      if (R.trends.halves) R.trends.halves.forEach(function (g) { trow("曲の" + g.label, g.st); });
+      tb.appendChild(tbody); tw.appendChild(tb);
+      p1.appendChild(el("h4", null, "音域別・前半と後半")); p1.appendChild(tw);
+    }
+    sec1.appendChild(p1); wrap.appendChild(sec1);
+
+    /* 2. Good points */
+    var sec2 = el("section"); sec2.appendChild(el("h2", null, "2. 良い点"));
+    var p2 = el("div", "panel"), goods = R.items.filter(function (x) { return x.j.state === "good"; });
+    if (goods.length) {
+      var ul = el("ul", "plain");
+      goods.forEach(function (x) { ul.appendChild(el("li", null, x.c.label + "は " + REPORT.fmtVal(x.c.key, x.v) + " で、良好の範囲（" + REPORT.rangeText(x.cr.g, x.c.unit) + "）に入っています。" + (x.basis === "仮" ? "（仮の基準）" : ""))); });
+      p2.appendChild(ul);
+    } else p2.appendChild(el("p", "note", "良好の範囲に入った指標はありませんでした。下の問題点から1つずつ取り組んでください。"));
+    if (s.mode === "choir" && !R.st.vibN && R.st.longN) p2.appendChild(el("p", "note", "1秒以上の音でビブラートが見られず、まっすぐな声で歌えています。合唱ではまっすぐな声のほうが周りと溶け合いやすいとされます。"));
+    sec2.appendChild(p2); wrap.appendChild(sec2);
+
+    /* 3. Problems */
+    var sec3 = el("section"); sec3.appendChild(el("h2", null, "3. 問題点"));
+    var p3 = el("div", "panel");
+    if (R.problems.length) {
+      var ul3 = el("ul", "plain");
+      R.problems.forEach(function (pr) { var li = el("li"); li.appendChild(stateChip(pr.state)); li.appendChild(document.createTextNode(" " + pr.feature + (pr.basis === "仮" ? "（仮の基準）" : "（文献の基準）"))); ul3.appendChild(li); });
+      p3.appendChild(ul3);
+      if (R.moreProblems > 0) p3.appendChild(el("p", "note", "影響の大きい順に3つまで示しています。ほかに " + R.moreProblems + " 件あります。上の帯で確認できます。"));
+    } else p3.appendChild(el("p", "note", "基準から外れた指標はありませんでした。"));
+    sec3.appendChild(p3); wrap.appendChild(sec3);
+
+    /* 4. Advice */
+    var sec4 = el("section"); sec4.appendChild(el("h2", null, "4. 改善のアドバイス"));
+    var p4 = el("div", "panel");
+    if (R.problems.length) R.problems.forEach(function (pr) {
+      var a = el("div", "advice"), h = el("h4"); h.appendChild(document.createTextNode(pr.feature)); a.appendChild(h);
+      var dl = el("dl");
+      dl.appendChild(el("dt", null, "考えられる原因")); dl.appendChild(el("dd", null, pr.cause + "。音の数値だけでは体の使い方までは特定できないため、あくまで可能性です。"));
+      dl.appendChild(el("dt", null, "練習")); dl.appendChild(el("dd", null, pr.practice));
+      a.appendChild(dl); p4.appendChild(a);
+    });
+    else p4.appendChild(el("p", "note", "今の歌い方を保ちながら、同じ条件で定期的に録音して変化を見てください。"));
+    p4.appendChild(el("p", "note", "痛みや声がれが続く場合は、練習を続けず、医師や指導者に相談してください。"));
+    sec4.appendChild(p4); wrap.appendChild(sec4);
+
+    /* 5. Reliability */
+    var sec5 = el("section"); sec5.appendChild(el("h2", null, "5. 測定の信頼度"));
+    var p5 = el("div", "panel");
+    p5.appendChild(el("p", "lead", "この結果の信頼度：" + R.relLevel));
+    R.rel.forEach(function (r) { var row = el("div", "rel-row"); row.appendChild(stateChip(r[0], { good: "問題なし", warn: "注意", bad: "問題あり", na: "参考" }[r[0]])); row.appendChild(el("span", null, r[1])); p5.appendChild(row); });
+    p5.appendChild(el("p", "note", "判定の基準は「設定」タブで確認・変更できます。「仮の基準」は数値が研究で定まっていないため、アプリが仮に置いた値です。絶対値での判定より、同じ条件で録った自分の過去の記録との比較を重視してください。"));
+    sec5.appendChild(p5); wrap.appendChild(sec5);
+
+    root.appendChild(wrap);
+  }
+
+  /* ---------- saving and export ---------- */
+  function fileBase(s) { var d = new Date(s.date); return "voice-" + d.getFullYear() + ("0" + (d.getMonth() + 1)).slice(-2) + ("0" + d.getDate()).slice(-2) + "-" + ("0" + d.getHours()).slice(-2) + ("0" + d.getMinutes()).slice(-2); }
+  function persistCurrent() {
+    var all = sessions().filter(function (x) { return x.id !== S.session.id; });
+    all.unshift(S.session);
+    return store("voice-sessions", all);
+  }
+  function saveCurrent(btn) {
+    if (!S.session) return;
+    S.session.title = $("memo").value.trim();
+    if (persistCurrent()) { S.savedId = S.session.id; btn.textContent = "記録済み"; btn.disabled = true; renderHistory(); }
+    else { btn.parentNode.parentNode.appendChild(el("p", "note err", "端末の保存容量がいっぱいで記録できませんでした。古い記録を書き出してから削除してください。")); }
+  }
+  function csvCell(v) { if (v === null || v === undefined) return ""; var s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function toCSV(s) {
+    var off = PITCH.a4off(s.a4), lines = ["# 歌声分析アプリ 記録 " + s.date + " " + (s.title || s.source) + " mode=" + s.mode + " voice=" + s.voice + " A4=" + s.a4,
+      "時刻(秒),音,長さ(秒),ずれ(セント),安定性(セント),ビブラート速さ(Hz),ビブラート深さ(±セント)"];
+    s.notes.forEach(function (n) { var r = n.c - off, t = Math.round(r / 100) * 100; lines.push([n.t, PITCH.nameOf(t), n.dur, Math.round((r - t) * 10) / 10, n.stab, n.rate, n.ext].map(csvCell).join(",")); });
+    lines.push("", "時刻(秒),音高(セント・A4=440基準でMIDI×100),音量(dB),SPR(dB),帯域比(dB),倍音の傾き(dB/oct),HNR(dB)");
+    var tl = s.timeline;
+    for (var i = 0; i < tl.c.length; i++) lines.push([Math.round((tl.t0 + i * tl.hop) * 100) / 100, tl.c[i], tl.lev[i], tl.spr[i], tl.band[i], tl.tilt[i], tl.hnr[i]].map(csvCell).join(","));
+    return lines.join("\n");
+  }
+  var dlPromise = null;
+  function downloads() { if (!dlPromise) dlPromise = (window.claude && window.claude.use) ? window.claude.use("downloads").catch(function () { return null; }) : Promise.resolve(null); return dlPromise; }
+  function showCopyBox(box, text, why) {
+    box.textContent = "";
+    var p = el("div", "panel");
+    p.appendChild(el("p", "note", why + "下の内容をコピーして、メモアプリなどに貼り付けて保存してください。"));
+    var ta = el("textarea"); ta.readOnly = true; ta.value = text; ta.setAttribute("aria-label", "書き出す内容"); p.appendChild(ta);
+    var row = el("div", "row"), b = el("button", "small", "コピー"), msg = el("span", "note"); b.type = "button"; msg.setAttribute("role", "status");
+    b.addEventListener("click", function () {
+      var fallback = function () { ta.focus(); ta.select(); try { ta.setSelectionRange(0, ta.value.length); } catch (e) {} msg.textContent = "全文を選択しました。長押しして「コピー」を選んでください"; };
+      try { navigator.clipboard.writeText(ta.value).then(function () { msg.textContent = "コピーしました"; }, fallback); } catch (e) { fallback(); }
+    });
+    row.appendChild(b); row.appendChild(msg); p.appendChild(row); box.appendChild(p);
+  }
+  function blobSave(name, text) {
+    try {
+      var isCsv = /\.csv$/.test(name), blob = new Blob([(isCsv ? "\ufeff" : "") + text], { type: isCsv ? "text/csv;charset=utf-8" : "application/json" });
+      var a = document.createElement("a"), url = URL.createObjectURL(blob);
+      a.href = url; a.download = name; a.style.display = "none"; document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 4000);
+      return true;
+    } catch (e) { return false; }
+  }
+  function exportText(name, text, box) {
+    if (!box) return;
+    box.textContent = "";
+    downloads().then(function (dl) {
+      if (!dl) {
+        if (blobSave(name, text)) { box.textContent = ""; box.appendChild(el("p", "note", name + " を保存しました。iPhoneでは「ファイル」アプリの「ダウンロード」に入ります。")); }
+        else showCopyBox(box, text, "この画面ではファイルとして保存できません。");
+        return;
+      }
+      dl.save({ filename: name, data: text }).then(function (r) {
+        box.textContent = ""; box.appendChild(el("p", "note", r.status === "saved" ? name + " を保存しました。" : name + " を送りました。"));
+      }, function (e) {
+        var code = e && e.code;
+        if (code === "declined") { box.textContent = ""; box.appendChild(el("p", "note", "保存を取りやめました。")); }
+        else if (code === "rate_limited") { box.textContent = ""; box.appendChild(el("p", "note", "別の保存の確認が開いています。閉じてからもう一度押してください。")); }
+        else showCopyBox(box, text, "ファイルとして保存できませんでした。");
+      });
+    });
+  }
+
+  /* ---------- history ---------- */
+  /* ---------- comparing two records ---------- */
+  function fmtDate(iso) { var d = new Date(iso); return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + ("0" + d.getMinutes()).slice(-2); }
+  function recordById(id) {
+    if (id === "current") return S.session && !S.savedId ? S.session : null;
+    var all = sessions(); for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+  function togglePick(id, on) {
+    S.cmp = S.cmp.filter(function (x) { return x !== id; });
+    if (on) { S.cmp.push(id); if (S.cmp.length > 2) S.cmp.shift(); }
+    renderHistory();
+  }
+  var VERDICT = { better: "改善", worse: "悪化", same: "変化なし", keep: "良好のまま", na: "比べられない" };
+  function diffText(key, d) {
+    if (!isFinite(d)) return "—";
+    var sign = d > 0 ? "+" : d < 0 ? "−" : "±", a = Math.abs(d);
+    if (key === "devAbs" || key === "stab" || key === "vibExt") return sign + Math.round(a) + " セント";
+    if (key === "vibRate") return sign + a.toFixed(1) + " Hz";
+    return sign + a.toFixed(1) + (key === "tilt" ? " dB/oct" : " dB");
+  }
+  function renderCompare() {
+    var box = $("cmpBody"); box.textContent = "";
+    S.cmp = S.cmp.filter(function (id) { return !!recordById(id); });
+    var p = el("div", "panel");
+    if (S.cmp.length < 2) {
+      p.appendChild(el("p", "note", S.cmp.length === 1 ? "もう1つ選んでください。" : "下の一覧で「比べる」に2つ印を付けると、指標ごとの変化をここに表示します。練習の前と後、先週と今週などを比べられます。"));
+      box.appendChild(p); return;
+    }
+    var r0 = recordById(S.cmp[0]), r1 = recordById(S.cmp[1]);
+    var a = new Date(r0.date) <= new Date(r1.date) ? r0 : r1, b = a === r0 ? r1 : r0;
+    var X = REPORT.compare(a, b, criteria);
+    var head = el("div", "cmp-head");
+    [[a, "a", "A"], [b, "b", "B"]].forEach(function (z) {
+      head.appendChild(el("span", "cmp-key " + z[1], z[2]));
+      var t = el("span"); t.appendChild(el("b", null, (z[0] === S.session && !S.savedId ? "いまの分析（未記録）" : (z[0].title || z[0].source || "無題の記録"))));
+      t.appendChild(document.createTextNode("　" + fmtDate(z[0].date) + "・" + (z[0].mode === "choir" ? "合唱" : "ソロ"))); head.appendChild(t);
+    });
+    p.appendChild(head);
+    p.appendChild(el("p", "lead", "A（古い記録）からB（新しい記録）にかけて、改善 " + X.n.better + "・悪化 " + X.n.worse + "・変化なし " + (X.n.same + X.n.keep) + " でした。"));
+    var notes = [];
+    if (X.modeDiffers) notes.push("2つのモードが違うため、どちらもBの" + (X.mode === "choir" ? "合唱" : "ソロ") + "モードの基準で判定しています。");
+    if (X.condA !== "高い" || X.condB !== "高い") notes.push("録音条件の信頼度がA「" + X.condA + "」、B「" + X.condB + "」です。響きと澄み具合の差は、録音条件の違いによる可能性があります。");
+    notes.push("「改善」は良好の範囲に近づいたこと、「悪化」は離れたことを表します。小さな差は「変化なし」としています。");
+    notes.forEach(function (t) { p.appendChild(el("p", "note", t)); });
+    var list = el("div", "metrics");
+    X.rows.forEach(function (r) {
+      var row = el("div", "cmp-row"), lab = el("div", "m-label");
+      lab.appendChild(el("span", null, r.c.label)); row.appendChild(lab);
+      row.appendChild(el("span", "state " + r.verdict, VERDICT[r.verdict]));
+      var vals = el("div", "cmp-vals");
+      vals.appendChild(el("span", null, "A " + REPORT.fmtVal(r.c.key, r.va)));
+      vals.appendChild(el("span", null, "B " + REPORT.fmtVal(r.c.key, r.vb)));
+      vals.appendChild(el("span", null, "差 " + diffText(r.c.key, r.diff)));
+      row.appendChild(vals);
+      if (isFinite(r.va) || isFinite(r.vb)) row.appendChild(bandBar({ c: r.c, cr: r.cr, v: r.vb }, r.va));
+      list.appendChild(row);
+    });
+    p.appendChild(list);
+    p.appendChild(el("p", "note", "帯の白丸がA、縦線がBです。濃い緑が良好、薄い黄色が許容の範囲です。"));
+    var acts = el("div", "row"), clr = el("button", "small", "選択を解除"); clr.type = "button";
+    clr.addEventListener("click", function () { S.cmp = []; renderHistory(); });
+    acts.appendChild(clr); p.appendChild(acts);
+    box.appendChild(p);
+  }
+  function pickBox(id) {
+    var lab = el("label", "pick"), cb = el("input"); cb.type = "checkbox"; cb.id = "pick-" + id;
+    cb.checked = S.cmp.indexOf(id) >= 0; lab.htmlFor = cb.id;
+    cb.addEventListener("change", function () { togglePick(id, cb.checked); });
+    lab.appendChild(cb); lab.appendChild(document.createTextNode("比べる"));
+    return lab;
+  }
+
+  function renderHistory() {
+    var list = $("histList"), all = sessions(); list.textContent = "";
+    if (S.session && !S.savedId) {
+      var cs = REPORT.analyse(S.session, criteria), ci = el("div", "panel hist-item");
+      ci.dataset.picked = String(S.cmp.indexOf("current") >= 0);
+      ci.appendChild(el("span", "title", "いまの分析（未記録）"));
+      ci.appendChild(el("span", "meta", (S.session.title || S.session.source || "") + "・" + cs.st.n + "音"));
+      var crow = el("div", "row"), csave = el("button", "small", "記録する"); csave.type = "button";
+      csave.addEventListener("click", function () {
+        var picked = S.cmp.slice();
+        saveCurrent(csave);
+        if (S.savedId) { S.cmp = picked.map(function (x) { return x === "current" ? S.savedId : x; }); renderHistory(); }
+      });
+      crow.appendChild(pickBox("current")); crow.appendChild(csave); ci.appendChild(crow);
+      list.appendChild(ci);
+    }
+    renderCompare();
+    if (!all.length) { var p = el("div", "panel"); p.appendChild(el("p", "empty", "まだ記録はありません。分析のあと、レポートの「この結果を記録する」で残せます。")); list.appendChild(p); return; }
+    all.forEach(function (s) {
+      var st = REPORT.analyse(s, criteria), item = el("div", "panel hist-item"), d = new Date(s.date);
+      item.dataset.picked = String(S.cmp.indexOf(s.id) >= 0);
+      item.appendChild(el("span", "title", s.title || s.source || "無題の記録"));
+      item.appendChild(el("span", "meta", d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + ("0" + d.getMinutes()).slice(-2) + "　" + (s.mode === "choir" ? "合唱" : "ソロ") + "・" + st.st.n + "音"));
+      item.appendChild(el("span", "vals", "ずれ " + (isFinite(st.st.devAbs) ? Math.round(st.st.devAbs) + "c" : "—") + "　安定性 " + (isFinite(st.st.stab) ? Math.round(st.st.stab) + "c" : "—") +
+        "　響き " + (isFinite(st.st.band) ? REPORT.nf(st.st.band, 1) + "dB" : "—") + "　HNR " + (isFinite(st.st.hnr) ? REPORT.nf(st.st.hnr, 1) + "dB" : "—")));
+      var counts = el("div", "counts");
+      counts.appendChild(stateChip("good", "良好 " + st.counts.good)); counts.appendChild(stateChip("warn", "注意 " + st.counts.warn)); counts.appendChild(stateChip("bad", "要改善 " + st.counts.bad));
+      item.appendChild(counts);
+      var row = el("div", "row"), open = el("button", "small primary", "レポートを開く"), del = el("button", "small danger", "削除");
+      open.type = del.type = "button";
+      open.addEventListener("click", function () { showReport(s.id); setTab("report"); });
+      del.addEventListener("click", function () {
+        if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "もう一度押すと削除"; setTimeout(function () { del.dataset.armed = ""; del.textContent = "削除"; }, 4000); return; }
+        store("voice-sessions", sessions().filter(function (x) { return x.id !== s.id; }));
+        if (S.savedId === s.id) S.savedId = null;
+        if (S.shown === s.id) S.shown = S.session ? "current" : null;
+        S.cmp = S.cmp.filter(function (x) { return x !== s.id; });
+        renderHistory();
+      });
+      row.appendChild(pickBox(s.id)); row.appendChild(open); row.appendChild(del); item.appendChild(row);
+      list.appendChild(item);
+    });
+  }
+  $("btnExportAll").addEventListener("click", function () {
+    var all = sessions(); if (!all.length) return;
+    exportText("voice-records-" + fileBase({ date: new Date().toISOString() }).slice(6) + ".json", JSON.stringify(all, null, 1), $("histExport"));
+  });
+
+  /* ---------- settings ---------- */
+  function renderCriteria() {
+    var body = $("critBody"), mode = S.critMode; body.textContent = "";
+    $("critSolo").setAttribute("aria-pressed", String(mode === "solo")); $("critChoir").setAttribute("aria-pressed", String(mode === "choir"));
+    REPORT.CRIT.forEach(function (c) {
+      var row = el("div", "crit-row"), name = el("div", "crit-name"), basis = REPORT.basisOf(c, mode);
+      name.appendChild(el("span", null, c.label)); name.appendChild(el("span", "tag", (basis === "文献" ? "文献の基準" : "仮の基準") + "・" + (c.unit === "±セント" ? "セント" : c.unit)));
+      row.appendChild(name);
+      ["g", "a"].forEach(function (which) {
+        var td = el("div", "crit-range"), r = criteria[mode][c.key][which];
+        td.appendChild(el("span", "crit-lab", which === "g" ? "良好" : "許容"));
+        [0, 1].forEach(function (side) {
+          var inp = el("input"); inp.type = "number"; inp.step = "any"; inp.inputMode = "decimal";
+          inp.id = "crit-" + mode + "-" + c.key + "-" + which + side;
+          inp.setAttribute("aria-label", c.label + " " + (which === "g" ? "良好" : "許容") + " " + (side ? "上限" : "下限"));
+          inp.placeholder = side ? "上限" : "下限";
+          inp.value = r[side] === null ? "" : String(r[side]);
+          inp.addEventListener("change", function () {
+            var v = inp.value.trim() === "" ? null : parseFloat(inp.value);
+            criteria[mode][c.key][which][side] = isFinite(v) ? v : null;
+            store("voice-criteria", criteria); $("critNote").textContent = "保存しました";
+            if (S.shown) renderReport();
+          });
+          td.appendChild(inp);
+          if (!side) td.appendChild(el("span", "crit-sep", "〜"));
+        });
+        row.appendChild(td);
+      });
+      body.appendChild(row);
+    });
+  }
+  $("critSolo").addEventListener("click", function () { S.critMode = "solo"; renderCriteria(); });
+  $("critChoir").addEventListener("click", function () { S.critMode = "choir"; renderCriteria(); });
+  $("btnCritReset").addEventListener("click", function () {
+    criteria[S.critMode] = REPORT.defaults(S.critMode); store("voice-criteria", criteria);
+    renderCriteria(); $("critNote").textContent = (S.critMode === "solo" ? "ソロ" : "合唱") + "の基準を初期値に戻しました";
+    if (S.shown) renderReport();
+  });
+
+  /* ---------- reference tone (drone) ----------
+     Played straight to the speaker, not through the analyser, so it never mixes into the measurements. */
+  var NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+  var drone = { on: false, nodes: null, wave: null };
+  (function initDrone() {
+    var ns = $("droneNote"), os = $("droneOct"), saved = load("voice-drone", {}), k;
+    NOTE_NAMES.forEach(function (n, i) { var o = el("option", null, n); o.value = String(i); ns.appendChild(o); });
+    for (k = 1; k <= 6; k++) { var o = el("option", null, String(k)); o.value = String(k); os.appendChild(o); }
+    var def = { S: [9, 4], A: [2, 4], T: [9, 3], B: [2, 3] }[S.voice] || [9, 3];
+    ns.value = String(saved.n >= 0 && saved.n < 12 ? saved.n : def[0]);
+    os.value = String(saved.o >= 1 && saved.o <= 6 ? saved.o : def[1]);
+    if (saved.vol >= 0 && saved.vol <= 100) $("droneVol").value = String(saved.vol);
+    $("droneFifth").checked = !!saved.fifth;
+  })();
+  function droneMidi() { return 12 * (parseInt($("droneOct").value, 10) + 1) + parseInt($("droneNote").value, 10); }
+  function droneFreq() { return S.a4 * Math.pow(2, (droneMidi() - 69) / 12); }
+  function droneGain() { var v = parseInt($("droneVol").value, 10) / 100; return 0.25 * v * v; }
+  function saveDrone() { store("voice-drone", { n: +$("droneNote").value, o: +$("droneOct").value, vol: +$("droneVol").value, fifth: $("droneFifth").checked }); }
+  function droneLabel() {
+    var f = droneFreq();
+    $("droneHz").textContent = NOTE_NAMES[+$("droneNote").value] + $("droneOct").value + "　" + f.toFixed(1) + " Hz" + ($("droneFifth").checked ? "＋" + (f * 1.5).toFixed(1) + " Hz" : "");
+  }
+  function droneVoice(c, f, g) {
+    /* A few soft harmonics: a pure sine is hard to hear on a phone speaker in the low register. */
+    if (!drone.wave) {
+      var H = 8, re = new Float32Array(H + 1), im = new Float32Array(H + 1);
+      for (var h = 1; h <= H; h++) im[h] = 1 / Math.pow(h, 1.6);
+      drone.wave = c.createPeriodicWave(re, im);
+    }
+    var osc = c.createOscillator(), gain = c.createGain();
+    osc.setPeriodicWave(drone.wave); osc.frequency.value = f;
+    gain.gain.value = 0; gain.gain.setTargetAtTime(g, c.currentTime, 0.03);
+    osc.connect(gain); gain.connect(c.destination); osc.start();
+    return { osc: osc, gain: gain };
+  }
+  async function droneStart() {
+    var c;
+    try { c = getCtx(); } catch (e) { $("droneNoteText").textContent = e.message; return; }
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    await resume(c);
+    droneStop(true);
+    var f = droneFreq(), g = droneGain();
+    drone.nodes = [droneVoice(c, f, g)];
+    if ($("droneFifth").checked) drone.nodes.push(droneVoice(c, f * 1.5, g * 0.7));
+    drone.on = true; syncDrone();
+  }
+  function droneStop(quiet) {
+    if (drone.nodes && ctx) {
+      var t = ctx.currentTime;
+      drone.nodes.forEach(function (v) { try { v.gain.gain.setTargetAtTime(0, t, 0.03); v.osc.stop(t + 0.2); } catch (e) {} });
+    }
+    drone.nodes = null;
+    if (!quiet) { drone.on = false; syncDrone(); }
+  }
+  function droneRetune() {
+    droneLabel(); saveDrone();
+    if (!drone.on || !drone.nodes || !ctx) return;
+    var f = droneFreq(), t = ctx.currentTime, g = droneGain();
+    drone.nodes[0].osc.frequency.setTargetAtTime(f, t, 0.01); drone.nodes[0].gain.gain.setTargetAtTime(g, t, 0.03);
+    var wantFifth = $("droneFifth").checked;
+    if (wantFifth && drone.nodes.length === 1) drone.nodes.push(droneVoice(ctx, f * 1.5, g * 0.7));
+    else if (!wantFifth && drone.nodes.length === 2) { var v = drone.nodes.pop(); v.gain.gain.setTargetAtTime(0, t, 0.03); v.osc.stop(t + 0.2); }
+    else if (drone.nodes[1]) { drone.nodes[1].osc.frequency.setTargetAtTime(f * 1.5, t, 0.01); drone.nodes[1].gain.gain.setTargetAtTime(g * 0.7, t, 0.03); }
+  }
+  function syncDrone() {
+    var b = $("btnDrone"); b.setAttribute("aria-pressed", String(drone.on)); b.textContent = drone.on ? "止める" : "鳴らす";
+    $("btnDroneMatch").disabled = !S.track;
+  }
+  function shiftDrone(step) {
+    var m = Math.max(24, Math.min(95, droneMidi() + step));
+    $("droneNote").value = String(m % 12); $("droneOct").value = String(Math.floor(m / 12) - 1); droneRetune();
+  }
+  $("btnDrone").addEventListener("click", function () { if (drone.on) droneStop(); else droneStart(); });
+  $("droneNote").addEventListener("change", droneRetune);
+  $("droneOct").addEventListener("change", droneRetune);
+  $("droneVol").addEventListener("input", droneRetune);
+  $("droneFifth").addEventListener("change", droneRetune);
+  $("btnDroneUp").addEventListener("click", function () { shiftDrone(1); });
+  $("btnDroneDown").addEventListener("click", function () { shiftDrone(-1); });
+  $("btnDroneMatch").addEventListener("click", function () {
+    if (!S.track) return;
+    var i = frameAt(position()), ni = noteAt(i), c = ni >= 0 ? S.track.notes[ni].meanC : S.track.c[i];
+    if (!isFinite(c)) {
+      /* Nothing sung at the playhead: take the nearest note after it. */
+      var later = S.track.notes.filter(function (n) { return n.a >= i; })[0];
+      if (!later) { $("droneNoteText").textContent = "再生位置の近くに歌った音がありません。再生位置を動かしてから押してください。"; return; }
+      c = later.meanC;
+    }
+    var m = Math.round((c - PITCH.a4off(S.a4)) / 100);
+    m = Math.max(24, Math.min(95, m));
+    $("droneNote").value = String(m % 12); $("droneOct").value = String(Math.floor(m / 12) - 1);
+    droneRetune();
+    $("droneNoteText").textContent = PITCH.nameOf(m * 100) + " に合わせました。基準ピッチ（A＝）の設定に合わせて鳴ります。";
+  });
+  document.addEventListener("visibilitychange", function () { if (document.hidden && drone.on) droneStop(); });
+
+  /* ---------- tabs ---------- */
+  function setTab(name) {
+    S.tab = name;
+    ["analyze", "report", "history", "settings"].forEach(function (v) {
+      $("view-" + v).hidden = v !== name;
+      $("tab-" + v).setAttribute("aria-selected", String(v === name));
+    });
+    $("transport").hidden = name !== "analyze";
+    if (name === "report") { renderReport(); if (S.shown === "current") S.reportSeen = true; }
+    if (name === "history") renderHistory();
+    if (name === "settings") renderCriteria();
+    if (name === "analyze") render(false);
+    updateReportAvailability();
+    window.scrollTo(0, 0);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("nav.tabbar button"), function (b) { b.addEventListener("click", function () { setTab(b.dataset.view); }); });
+  $("btnToReport").addEventListener("click", function () { showReport("current"); setTab("report"); });
+
+  /* ---------- transport and sources ---------- */
+  function syncTransport() {
+    $("btnPlay").textContent = S.playing ? "一時停止" : "再生";
+    $("btnPlay").disabled = !S.pcm || !!rec;
+    var seek = $("seek"), pos = position();
+    seek.max = String(S.dur); if (document.activeElement !== seek || S.playing) seek.value = String(pos);
+    $("time").textContent = mmss(pos) + " / " + mmss(S.dur);
+  }
+  function note(text, isErr) { var e = $("srcNote"); e.textContent = text; e.className = "note" + (isErr ? " err" : ""); }
+  function traceNote() {
+    var e = $("traceNote");
+    if (S.failed) e.textContent = "解析できませんでした。ページを開き直してください。";
+    else if (S.pcm && !S.track) e.textContent = "音程と響きを解析しています… " + Math.round(S.prog * 100) + "%";
+    else e.textContent = "横は時間、縦は音の高さです。細い線が歌った音程、太い横線が判定した音で、数字はその音の平均のずれ（セント）です。";
+  }
+  function resetView() { pause(); S.buffer = null; S.offset = 0; cur = null; clearSg(); }
+  function loadTone(kind) {
+    resetView();
+    S.kind = "tone"; S.tone = kind; S.source = DSP.TONES[kind].label; S.fileInfo = null;
+    var sr = ctx ? ctx.sampleRate : 48000, data = DSP.synth(kind, sr);
+    S.pcm = { sr: sr, data: data }; S.dur = data.length / sr;
+    $("srcName").textContent = DSP.TONES[kind].label;
+    Array.prototype.forEach.call(document.querySelectorAll("button.tone"), function (b) { b.setAttribute("aria-pressed", String(b.dataset.tone === kind)); });
+    note(DSP.TONES[kind].about);
+    S.shown = "current";
+    startTrack(); analyseAt(0); syncTransport();
+  }
+  function setMode(m) {
+    S.mode = m; savePrefs();
+    $("modeSolo").setAttribute("aria-pressed", String(m === "solo")); $("modeChoir").setAttribute("aria-pressed", String(m === "choir"));
+    refreshSessionOpts();
+  }
+
+  $("btnPlay").addEventListener("click", function () { if (S.playing) pause(); else play(); });
+  Array.prototype.forEach.call(document.querySelectorAll("button.tone"), function (b) { b.addEventListener("click", function () { loadTone(b.dataset.tone); }); });
+  $("chkSound").addEventListener("change", function () { if (outGain) outGain.gain.value = this.checked ? 1 : 0; });
+  $("modeSolo").addEventListener("click", function () { setMode("solo"); });
+  $("modeChoir").addEventListener("click", function () { setMode("choir"); });
+  $("selVoice").addEventListener("change", function () { S.voice = this.value; savePrefs(); refreshSessionOpts(); });
+  $("memo").addEventListener("change", function () { refreshSessionOpts(); });
+  $("selA4").addEventListener("change", function () {
+    S.a4 = parseFloat(this.value) || 440; savePrefs(); droneRetune();
+    buildNotes(); refreshSessionOpts(); render(false);
+  });
+  $("fileInput").addEventListener("click", function () { this.value = ""; });
+  $("fileInput").addEventListener("change", async function () {
+    var file = this.files && this.files[0]; if (!file) return;
+    resetView(); jobId++; if (worker) { worker.terminate(); worker = null; }
+    S.kind = "file"; S.source = file.name; S.pcm = null; S.track = null; S.session = null; S.savedId = null; S.dur = 0; S.shown = "current"; S.fileInfo = null;
+    renderConditions();
+    $("srcName").textContent = file.name;
+    Array.prototype.forEach.call(document.querySelectorAll("button.tone"), function (b) { b.setAttribute("aria-pressed", "false"); });
+    note("読み込んでいます…"); traceNote(); buildNotes(); updateReportAvailability(); render(false); syncTransport();
+    try {
+      var c = getCtx(), buf = await decode(c, await readBuffer(file));
+      if (S.kind !== "file" || S.source !== file.name) return;
+      var mono;
+      if (buf.numberOfChannels === 1) mono = buf.getChannelData(0);
+      else {
+        mono = new Float32Array(buf.length);
+        for (var ch = 0; ch < buf.numberOfChannels; ch++) { var d = buf.getChannelData(ch); for (var k = 0; k < d.length; k++) mono[k] += d[k] / buf.numberOfChannels; }
+      }
+      S.buffer = buf; S.pcm = { sr: buf.sampleRate, data: mono }; S.dur = buf.duration;
+      S.fileInfo = { kbps: buf.duration > 0 ? file.size * 8 / 1000 / buf.duration : null, ext: (file.name.split(".").pop() || "").toLowerCase() };
+      note("読み込みました（" + mmss(buf.duration) + "、" + buf.sampleRate + " Hz、" + (buf.numberOfChannels > 1 ? "ステレオをモノラルに混ぜて分析" : "モノラル") + "）。1人の声だけの録音が対象です。");
+      startTrack(); analyseAt(0); syncTransport();
+    } catch (e) {
+      note("このファイルは読み込めませんでした。m4a、mp3、wavなどに変換してから選び直してください。", true);
+      traceNote(); syncTransport();
+    }
+  });
+  $("seek").addEventListener("input", function () {
+    if (S.playing) { S.resumeAfterSeek = true; pause(); }
+    S.offset = Math.min(S.dur, parseFloat(this.value) || 0);
+    analyseAt(S.offset); $("time").textContent = mmss(S.offset) + " / " + mmss(S.dur);
+  });
+  $("seek").addEventListener("change", function () { if (S.resumeAfterSeek) { S.resumeAfterSeek = false; play(); } });
+  function setView(v) {
+    S.view = v;
+    $("btnViewSpec").setAttribute("aria-pressed", String(v === "spec")); $("btnViewSg").setAttribute("aria-pressed", String(v === "sg"));
+    $("spec").classList.toggle("off", v !== "spec"); $("sg").classList.toggle("off", v !== "sg"); $("sgAxis").classList.toggle("off", v !== "sg");
+    $("specNote").textContent = v === "spec"
+      ? "横軸は周波数（kHz）、縦軸は強さ（dB）。色の帯は2.5〜3.5kHz（歌手のフォルマントの範囲）、点は倍音の位置です。"
+      : "横が時間、縦が周波数で、色が濃いほど強い成分です。再生中に右から流れます。点線の間が2.5〜3.5kHzです。";
+  }
+  $("btnViewSpec").addEventListener("click", function () { setView("spec"); });
+  $("btnViewSg").addEventListener("click", function () { setView("sg"); });
+
+  /* ---------- microphone ----------
+     While recording: the spectrum, harmonics and timbre come from the live analyser every ~33 ms, and the pitch from a
+     frame-level YIN. The raw samples are kept; on stop they become the current source and go through the same
+     whole-file analysis as a loaded file, so the report is identical in kind. */
+  var REC_MAX = 600, rec = null, workletCtx = null;
+  var WORKLET = "class Cap extends AudioWorkletProcessor{process(i){var c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('voice-cap',Cap);";
+  function pad2(v) { return ("0" + v).slice(-2); }
+  function syncRec() {
+    var on = !!rec, b = $("btnRec");
+    b.setAttribute("aria-pressed", String(on)); b.textContent = on ? "録音を止める" : "マイクで録る";
+    $("recStatus").hidden = !on;
+    $("fileInput").disabled = on; $("btnPlay").disabled = on || !S.pcm; $("seek").disabled = on;
+    Array.prototype.forEach.call(document.querySelectorAll("button.tone"), function (x) { x.disabled = on; });
+  }
+  async function recStart() {
+    if (rec) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { note("この画面ではマイクを使えません。iPhoneのSafariで、このページ（https）を開いてください。", true); return; }
+    var c; try { c = getCtx(); } catch (e) { note(e.message, true); return; }
+    pause();
+    try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
+    await resume(c);
+    var stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    } catch (e) {
+      try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (x) {}
+      if (e && e.name === "NotAllowedError") note("マイクの使用が許可されませんでした。Safariのアドレスバーの「ぁあ」→「Webサイトの設定」→「マイク」を「許可」にしてから、もう一度押してください。Claudeアプリの中で開いている場合は、Safariで開き直してください。", true);
+      else if (e && e.name === "NotFoundError") note("マイクが見つかりませんでした。", true);
+      else note("マイクを開始できませんでした（" + (e && e.name ? e.name : "不明なエラー") + "）。", true);
+      return;
+    }
+    await resume(c);
+    var src = c.createMediaStreamSource(stream), an = c.createAnalyser(), sink = c.createGain();
+    an.fftSize = N; src.connect(an); sink.gain.value = 0; sink.connect(c.destination);
+    var r = { stream: stream, src: src, an: an, sink: sink, node: null, chunks: [], len: 0, t0: c.currentTime, sr: c.sampleRate, live: { t: [], c: [] }, smooth: NaN };
+    function push(d) { if (rec === r) { r.chunks.push(d); r.len += d.length; } }
+    try {
+      if (!c.audioWorklet || typeof AudioWorkletNode === "undefined") throw new Error("no worklet");
+      if (workletCtx !== c) { await c.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }))); workletCtx = c; }
+      var node = new AudioWorkletNode(c, "voice-cap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: "explicit" });
+      node.port.onmessage = function (ev) { push(ev.data); };
+      src.connect(node); node.connect(sink); r.node = node;
+    } catch (e) {
+      var sp = c.createScriptProcessor(4096, 1, 1);
+      sp.onaudioprocess = function (ev) { push(new Float32Array(ev.inputBuffer.getChannelData(0))); };
+      src.connect(sp); sp.connect(sink); r.node = sp;
+    }
+    rec = r; r.t0 = c.currentTime;
+    cur = null; clearSg(); S.center = 5700;
+    note(drone.on ? "録音中です。基準音がスピーカーから鳴っていると声と一緒に録音されるため、イヤホンで聴いてください。" : "録音中です。3秒ほど黙ってから歌い始めてください。");
+    $("srcName").textContent = "マイク（録音中）";
+    $("condLevel").className = "state na"; $("condLevel").textContent = "録音中";
+    $("condList").textContent = ""; $("condList").appendChild(el("p", "note", "録音を止めると、雑音・音割れ・録音の大きさ・声の量を確かめます。"));
+    syncRec(); if (S.tab !== "analyze") setTab("analyze");
+    var ro = document.querySelector("dl.readouts"); if (ro && ro.scrollIntoView) ro.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  function recStop(reason) {
+    if (!rec) return;
+    var r = rec; rec = null;
+    try { r.src.disconnect(); r.node.disconnect(); r.sink.disconnect(); } catch (e) {}
+    if (r.node.port) r.node.port.onmessage = null; else r.node.onaudioprocess = null;
+    r.stream.getTracks().forEach(function (t) { t.stop(); });
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    var data = new Float32Array(r.len), o = 0;
+    r.chunks.forEach(function (ch) { data.set(ch, o); o += ch.length; });
+    r.chunks = null;
+    syncRec();
+    if (r.len < r.sr * 0.5) { note("録音が短すぎました。もう一度録ってください。", true); render(false); return; }
+    resetView(); jobId++; if (worker) { worker.terminate(); worker = null; }
+    var d = new Date();
+    S.kind = "mic"; S.source = "マイク録音 " + (d.getMonth() + 1) + "/" + d.getDate() + " " + d.getHours() + ":" + pad2(d.getMinutes());
+    S.pcm = { sr: r.sr, data: data }; S.buffer = null; S.dur = data.length / r.sr; S.fileInfo = null; S.shown = "current";
+    $("srcName").textContent = S.source;
+    Array.prototype.forEach.call(document.querySelectorAll("button.tone"), function (b) { b.setAttribute("aria-pressed", "false"); });
+    note((reason || "") + "録音しました（" + mmss(S.dur) + "）。解析が終わるとレポートができます。再生すると、音程の動きと音ごとの結果を確かめられます。");
+    startTrack(); analyseAt(0); syncTransport(); syncRec();
+  }
+  function liveUpdate() {
+    var r = rec, el2 = ctx.currentTime - r.t0, off = PITCH.a4off(S.a4);
+    if (el2 >= REC_MAX) { recStop("10分に達したため自動で止めました。"); return; }
+    $("recStatus").textContent = "録音中 " + mmss(el2);
+    var f = cur && cur.f0, c = f ? PITCH.toC(f) : NaN;
+    if (isFinite(c)) r.smooth = isFinite(r.smooth) && Math.abs(c - r.smooth) < 150 ? r.smooth + (c - r.smooth) * 0.2 : c; else r.smooth = NaN;
+    r.live.t.push(el2); r.live.c.push(c);
+    if (S.tab !== "analyze") return;
+    if (!f) { setDD("vF0", "—", "声なし"); ["vDev", "vVib", "vBand", "vTilt", "vHnr"].forEach(function (id) { setDD(id, "—", id === "vVib" ? "録音後に計算" : ""); }); }
+    else {
+      var rr = PITCH.rel(r.smooth, S.a4);
+      setDD("vF0", f.toFixed(1) + " Hz", PITCH.rel(c, S.a4).name);
+      setDD("vDev", fmtC(rr.dev) + " c", rr.name + " から");
+      setDD("vVib", "—", "録音後に計算");
+      var tb = DSP.timbre(spec, f, cur.sr), h = DSP.hnr(tbuf, N / 2, f, cur.sr);
+      setDD("vBand", isFinite(tb.band) ? fx(tb.band, 1) + " dB" : "—", isFinite(tb.spr) ? "SPR " + fx(tb.spr, 1) : "");
+      setDD("vTilt", isFinite(tb.tilt) ? fx(tb.tilt, 1) : "—", "dB/オクターブ");
+      setDD("vHnr", isFinite(h) ? fx(h, 1) + " dB" : "—", isFinite(h) ? (h >= 20 ? "澄んでいる" : h >= 10 ? "ふつう" : "雑音が多い") : "");
+    }
+    drawLiveTrace(); drawSpectrum(); drawHarmonics(); pushSg();
+  }
+  function drawLiveTrace() {
+    var p = prep($("trace")); if (!p || !rec) return;
+    var g = p.g, t = T(), w = p.w, padL = 32, padR = 6, padB = 16, ph = p.h - padB, pw = w - padL - padR, L = rec.live, off = PITCH.a4off(S.a4), k, i;
+    var now = L.t.length ? L.t[L.t.length - 1] : 0, tEnd = Math.max(TRACE_WIN, now), tStart = tEnd - TRACE_WIN, vals = [];
+    for (i = L.t.length - 1; i >= 0 && L.t[i] >= now - 2; i--) if (isFinite(L.c[i])) vals.push(L.c[i] - off);
+    if (vals.length > 5) { vals.sort(function (a, b) { return a - b; }); var tg = Math.round(vals[vals.length >> 1] / 100) * 100; if (Math.abs(tg - S.center) >= 300) S.center = tg; }
+    var lo = S.center - 650, hi = S.center + 650;
+    var X = function (s) { return padL + (s - tStart) / TRACE_WIN * pw; }, Y = function (c) { return ph - (c - lo) / (hi - lo) * ph; };
+    g.clearRect(0, 0, w, p.h); g.lineWidth = 1; g.font = DATA_FONT; g.textAlign = "right"; g.textBaseline = "middle";
+    for (k = Math.ceil(lo / 100); k <= Math.floor(hi / 100); k++) {
+      var y = Math.round(Y(k * 100)) + 0.5, pc = ((k % 12) + 12) % 12, natural = [0, 2, 4, 5, 7, 9, 11].indexOf(pc) >= 0;
+      g.strokeStyle = t.line; g.globalAlpha = natural ? 1 : 0.45; g.beginPath(); g.moveTo(padL, y); g.lineTo(w - padR, y); g.stroke(); g.globalAlpha = 1;
+      if (natural) { g.fillStyle = pc === 0 ? t.ink : t.muted; g.fillText(PITCH.nameOf(k * 100), padL - 4, y); }
+    }
+    g.textAlign = "center"; g.textBaseline = "top"; g.fillStyle = t.muted;
+    for (k = Math.ceil(tStart / 2) * 2; k <= tEnd + 1e-6; k += 2) { var xs = X(k); if (xs < padL + 10 || xs > w - padR - 10) continue; g.fillText(Math.floor(k / 60) + ":" + pad2(k % 60), xs, ph + 3); }
+    g.strokeStyle = t.line; g.beginPath(); g.moveTo(padL, ph + 0.5); g.lineTo(w - padR, ph + 0.5); g.stroke();
+    g.save(); g.beginPath(); g.rect(padL, 0, pw, ph); g.clip();
+    g.strokeStyle = t.accent; g.lineWidth = 1.6; g.lineJoin = "round"; g.beginPath();
+    var pen = false;
+    for (i = 0; i < L.t.length; i++) {
+      if (L.t[i] < tStart - 0.1) continue;
+      var v = L.c[i]; if (!isFinite(v)) { pen = false; continue; }
+      var xx = X(L.t[i]), yy = Y(v - off); if (pen) g.lineTo(xx, yy); else { g.moveTo(xx, yy); pen = true; }
+    }
+    g.stroke(); g.restore();
+    if (!vals.length) hint(g, t, padL + pw / 2, ph / 2, "声を出すと音程の線が出ます");
+  }
+  $("btnRec").addEventListener("click", function () { if (rec) recStop(""); else recStart(); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden && rec) recStop("画面が切り替わったため止めました。"); });
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (rec && ctx && ts - lastFrame >= 33) { lastFrame = ts; rec.an.getFloatTimeDomainData(tbuf); analyse(tbuf, ctx.sampleRate); liveUpdate(); return; }
+    if (!S.playing || ts - lastFrame < 33) return;
+    lastFrame = ts;
+    analyser.getFloatTimeDomainData(tbuf);
+    analyse(tbuf, ctx.sampleRate);
+    if (S.tab === "analyze") { render(true); syncTransport(); }
+  }
+  window.addEventListener("resize", function () { render(false); });
+
+  setMode(S.mode);
+  droneLabel(); syncDrone();
+  loadTone("vib220");
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
